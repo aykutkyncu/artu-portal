@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import clsx from 'clsx'
-import { ArrowLeft, Info, Paperclip, SendHorizontal, Trash2, Users as UsersIcon, X, Loader2 } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, Bell, BellOff, EyeOff, Info, Paperclip, Pencil, SendHorizontal, Trash2, Users as UsersIcon, X, Loader2 } from 'lucide-react'
 import { isSameDay } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, insert, maybeRow, remove, rows, rpc, subscribe, supabase, update } from '../lib/db'
+import { errorMessage, insert, maybeRow, remove, rows, rpc, run, subscribe, supabase, toRow, update } from '../lib/db'
 import { MAX_ATTACHMENTS, removeAttachments, uploadAttachments } from '../lib/files'
 import { fmt, fromNow, parseDate } from '../lib/format'
 import { conversationPeer, conversationTitle } from '../lib/conversations'
-import type { Conversation, Message, User } from '../lib/types'
+import type { Conversation, ConversationSettings, Message, User } from '../lib/types'
 import { UserPicker } from './pickers'
 import { Attachments, Avatar, Button, ErrorNote, Field, IconButton, Input, Modal } from './ui'
 
@@ -24,7 +24,34 @@ function mergeMessages(current: Message[], incoming: Message[]): Message[] {
   return [...byId.values()].sort((a, b) => Date.parse(a.created) - Date.parse(b.created))
 }
 
-export function ChatView({ conversation }: { conversation: Conversation }) {
+/** Mesaja dokununca altında açılan işlem düğmesi. */
+function MessageAction({ danger, onClick, children }: { danger?: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={clsx(
+        'inline-flex items-center gap-1 rounded-full border bg-white px-2.5 py-1 text-xs shadow-sm',
+        danger ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-stone-200 text-stone-600 hover:bg-stone-50',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+export function ChatView({
+  conversation,
+  settings,
+  onSettings,
+  onChanged,
+}: {
+  conversation: Conversation
+  settings: ConversationSettings
+  onSettings: (patch: Partial<ConversationSettings>) => void
+  /** Mesaj gönderildi, düzenlendi ya da silindi: sohbet listesindeki özet tazelensin. */
+  onChanged: () => void
+}) {
   const me = useMe()
   const { usersById, setActiveConversation, markConversationRead } = useData()
   const [messages, setMessages] = useState<Message[] | null>(null)
@@ -34,6 +61,10 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
   const [isSending, setIsSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
+  /** İşlem düğmeleri açık olan mesaj */
+  const [activeId, setActiveId] = useState<string | null>(null)
+  /** Metni düzenlenmekte olan mesaj */
+  const [editing, setEditing] = useState<Message | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -151,17 +182,26 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
 
   const send = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (isSending || (!text.trim() && files.length === 0)) return
+    if (isSending || !canSend) return
     if (files.length > MAX_ATTACHMENTS) return setError(`Bir mesaja en fazla ${MAX_ATTACHMENTS} dosya eklenebilir.`)
     setIsSending(true)
     setError(null)
     try {
+      if (editing) {
+        const saved = await update<Message>('messages', editing.id, { text: text.trim() })
+        setMessages((prev) => prev?.map((m) => (m.id === saved.id ? saved : m)) ?? prev)
+        setEditing(null)
+        setText('')
+        onChanged()
+        return
+      }
       const attachments = await uploadAttachments('messages', conversation.id, files)
       const created = await insert<Message>('messages', { conversation: conversation.id, sender: me.id, text: text.trim(), attachments })
       stickToBottom.current = true
       setMessages((prev) => (prev && !prev.some((m) => m.id === created.id) ? [...prev, created] : prev))
       setText('')
       setFiles([])
+      onChanged()
       textareaRef.current?.focus()
     } catch (err) {
       setError(errorMessage(err))
@@ -179,12 +219,43 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
     }
   }
 
-  const removeMessage = async (m: Message) => {
-    if (!window.confirm('Mesaj silinsin mi?')) return
+  // Ekli mesajın metni tamamen silinebilir; eksiz mesaj boş bırakılamaz.
+  const canSend = editing ? Boolean(text.trim()) || editing.attachments.length > 0 : Boolean(text.trim()) || files.length > 0
+
+  const startEdit = (m: Message) => {
+    setEditing(m)
+    setText(m.text)
+    setFiles([])
+    setActiveId(null)
+    textareaRef.current?.focus()
+  }
+
+  const cancelEdit = () => {
+    setEditing(null)
+    setText('')
+  }
+
+  /** Kendi mesajını herkes için siler. */
+  const deleteForAll = async (m: Message) => {
+    if (!window.confirm('Mesaj herkes için silinsin mi?')) return
     try {
       await remove('messages', m.id)
       setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev)
       void removeAttachments(m.attachments)
+      if (editing?.id === m.id) cancelEdit()
+      onChanged()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  /** Mesajı sadece kendi görünümünden kaldırır; karşı taraf görmeye devam eder. */
+  const hideForMe = async (m: Message) => {
+    if (!window.confirm('Mesaj sadece sizin görünümünüzden kaldırılsın mı? Karşı taraf görmeye devam eder.')) return
+    try {
+      await run(supabase.from('message_hides').insert(toRow({ user: me.id, message: m.id })))
+      setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev)
+      if (editing?.id === m.id) cancelEdit()
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -216,6 +287,12 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
                   : peer?.title || ''}
           </div>
         </div>
+        <IconButton label={settings.muted ? 'Bildirimleri aç' : 'Sessize al'} onClick={() => onSettings({ muted: !settings.muted })}>
+          {settings.muted ? <BellOff className="size-5 text-amber-600" /> : <Bell className="size-5" />}
+        </IconButton>
+        <IconButton label={settings.archived ? 'Arşivden çıkar' : 'Arşivle'} onClick={() => onSettings({ archived: !settings.archived })}>
+          {settings.archived ? <ArchiveRestore className="size-5 text-amber-600" /> : <Archive className="size-5" />}
+        </IconButton>
         {isGroup && (
           <IconButton label="Grup bilgisi" onClick={() => setIsInfoOpen(true)}>
             <Info className="size-5" />
@@ -257,28 +334,44 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
                 )}
                 <div className={clsx('group flex items-end gap-2', mine ? 'justify-end' : 'justify-start', !grouped && 'mt-2')}>
                   {!mine && isGroup && (grouped ? <span className="w-7" /> : <Avatar user={sender} size={28} />)}
-                  {mine && (
-                    <button
-                      type="button"
-                      onClick={() => void removeMessage(m)}
-                      className="mb-1 hidden text-stone-300 group-hover:block hover:text-red-500"
-                      aria-label="Mesajı sil"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  )}
+                  {/* Mesaja dokununca işlemler açılır (ekteki bağlantıya dokunmak eki açar). */}
                   <div
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest('a')) return
+                      setActiveId(activeId === m.id ? null : m.id)
+                    }}
                     className={clsx(
-                      'max-w-[80%] rounded-2xl px-3 py-2 shadow-sm sm:max-w-[65%]',
+                      'max-w-[80%] cursor-pointer rounded-2xl px-3 py-2 shadow-sm sm:max-w-[65%]',
                       mine ? 'rounded-br-md bg-cocoa-700 text-white' : 'rounded-bl-md bg-white text-stone-800',
+                      (activeId === m.id || editing?.id === m.id) && 'ring-2 ring-amber-400',
                     )}
                   >
                     {!mine && isGroup && !grouped && <div className="mb-0.5 text-xs font-semibold text-cocoa-600">{sender?.name ?? 'Eski kullanıcı'}</div>}
                     {m.text && <p className="text-sm break-words whitespace-pre-wrap">{m.text}</p>}
                     <Attachments files={m.attachments} compact />
-                    <div className={clsx('mt-0.5 text-right text-[10px]', mine ? 'text-cocoa-200' : 'text-stone-400')}>{fmt(m.created, 'HH:mm')}</div>
+                    <div className={clsx('mt-0.5 text-right text-[10px]', mine ? 'text-cocoa-200' : 'text-stone-400')}>
+                      {m.editedAt && 'düzenlendi · '}
+                      {fmt(m.created, 'HH:mm')}
+                    </div>
                   </div>
                 </div>
+                {activeId === m.id && (
+                  <div className={clsx('mt-1 flex flex-wrap gap-1.5', mine ? 'justify-end' : 'justify-start', !mine && isGroup && 'pl-9')}>
+                    {mine && (
+                      <MessageAction onClick={() => startEdit(m)}>
+                        <Pencil className="size-3.5" /> Düzenle
+                      </MessageAction>
+                    )}
+                    <MessageAction onClick={() => void hideForMe(m)}>
+                      <EyeOff className="size-3.5" /> Benden sil
+                    </MessageAction>
+                    {mine && (
+                      <MessageAction danger onClick={() => void deleteForAll(m)}>
+                        <Trash2 className="size-3.5" /> Herkesten sil
+                      </MessageAction>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -290,6 +383,16 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
         {error && (
           <div className="mx-auto mb-2 max-w-3xl">
             <ErrorNote message={error} />
+          </div>
+        )}
+        {editing && (
+          <div className="mx-auto mb-2 flex max-w-3xl items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-900">
+            <span className="flex items-center gap-1.5">
+              <Pencil className="size-3.5" /> Mesaj düzenleniyor
+            </span>
+            <button type="button" onClick={cancelEdit} className="font-medium hover:underline">
+              Vazgeç
+            </button>
           </div>
         )}
         {files.length > 0 && (
@@ -305,7 +408,10 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
           </div>
         )}
         <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <label className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-stone-500 hover:bg-stone-100" aria-label="Dosya ekle">
+          <label
+            className={clsx('flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full text-stone-500 hover:bg-stone-100', editing && 'invisible')}
+            aria-label="Dosya ekle"
+          >
             <Paperclip className="size-5" />
             <input
               type="file"
@@ -328,9 +434,9 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
           />
           <button
             type="submit"
-            disabled={isSending || (!text.trim() && files.length === 0)}
+            disabled={isSending || !canSend}
             className="flex size-10 shrink-0 items-center justify-center rounded-full bg-cocoa-700 text-white disabled:opacity-40"
-            aria-label="Gönder"
+            aria-label={editing ? 'Kaydet' : 'Gönder'}
           >
             {isSending ? <Loader2 className="size-5 animate-spin" /> : <SendHorizontal className="size-5" />}
           </button>

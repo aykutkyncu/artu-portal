@@ -61,8 +61,16 @@ export interface Message extends Rec {
   sender: string
   text: string
   attachments: string[]
+  /** Metni sonradan değiştirildiyse dolu */
+  editedAt: string
   created: string
   updated: string
+}
+
+/** Kişinin bir sohbet için kendi ayarı (karşı tarafı etkilemez). */
+export interface ConversationSettings {
+  muted: boolean
+  archived: boolean
 }
 
 export type EventCategory = 'meeting' | 'shipment' | 'production' | 'leave' | 'training' | 'visit' | 'other'
