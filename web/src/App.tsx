@@ -1,0 +1,85 @@
+import { lazy, Suspense, type ReactNode } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
+import { Layout } from './components/Layout'
+import { ErrorBoundary } from './components/ErrorBoundary'
+import { Spinner } from './components/ui'
+import { AuthProvider, useAuth } from './context/AuthContext'
+import { DataProvider } from './context/DataContext'
+import { isAdmin } from './lib/pb'
+import LoginPage from './pages/LoginPage'
+import HomePage from './pages/HomePage'
+
+// Takvim gibi ağır sayfalar ihtiyaç anında yüklenir.
+const AnnouncementsPage = lazy(() => import('./pages/AnnouncementsPage'))
+const AnnouncementDetailPage = lazy(() => import('./pages/AnnouncementDetailPage'))
+const MessagesPage = lazy(() => import('./pages/MessagesPage'))
+const CalendarPage = lazy(() => import('./pages/CalendarPage'))
+const TasksPage = lazy(() => import('./pages/TasksPage'))
+const ShiftsPage = lazy(() => import('./pages/ShiftsPage'))
+const ProductionPage = lazy(() => import('./pages/ProductionPage'))
+const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
+const AdminPage = lazy(() => import('./pages/AdminPage'))
+const ProfilePage = lazy(() => import('./pages/ProfilePage'))
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  return user ? children : <Navigate to="/giris" replace />
+}
+
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  return isAdmin(user) ? children : <Navigate to="/" replace />
+}
+
+function AppRoutes() {
+  const { user } = useAuth()
+  return (
+    <Suspense fallback={<Spinner />}>
+      <Routes>
+        <Route path="/giris" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route
+          element={
+            <RequireAuth>
+              <Layout />
+            </RequireAuth>
+          }
+        >
+          <Route index element={<HomePage />} />
+          <Route path="duyurular" element={<AnnouncementsPage />} />
+          <Route path="duyurular/:id" element={<AnnouncementDetailPage />} />
+          <Route path="mesajlar" element={<MessagesPage />} />
+          <Route path="mesajlar/:id" element={<MessagesPage />} />
+          <Route path="takvim" element={<CalendarPage />} />
+          <Route path="gorevler" element={<TasksPage />} />
+          <Route path="vardiya" element={<ShiftsPage />} />
+          <Route path="uretim" element={<ProductionPage />} />
+          <Route path="rehber" element={<DirectoryPage />} />
+          <Route path="profil" element={<ProfilePage />} />
+          <Route
+            path="yonetim"
+            element={
+              <RequireAdmin>
+                <AdminPage />
+              </RequireAdmin>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </Suspense>
+  )
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <DataProvider>
+            <AppRoutes />
+          </DataProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
+  )
+}

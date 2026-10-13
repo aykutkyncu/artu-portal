@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --color-cocoa-50: #faf6f1;
+  --color-cocoa-100: #f3eadf;
+  --color-cocoa-200: #e6d3bd;
+  --color-cocoa-300: #d4b392;
+  --color-cocoa-400: #b98b62;
+  --color-cocoa-500: #9a6b45;
+  --color-cocoa-600: #7d5236;
+  --color-cocoa-700: #63402b;
+  --color-cocoa-800: #4a2c1d;
+  --color-cocoa-900: #331d12;
+  --color-cream: #f3d9b1;
+}
+
+html, body, #root { height: 100%; }
+body {
+  @apply bg-cocoa-50 text-stone-800 antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-top { padding-top: env(safe-area-inset-top); }
+
+/* Duyuru içeriği (zengin metin) */
+.prose-artu p { margin: 0.5rem 0; }
+.prose-artu ul { list-style: disc; padding-left: 1.25rem; margin: 0.5rem 0; }
+.prose-artu ol { list-style: decimal; padding-left: 1.25rem; margin: 0.5rem 0; }
+.prose-artu a { @apply text-cocoa-600 underline; }
+.prose-artu b, .prose-artu strong { font-weight: 600; }
+
+/* FullCalendar uyumu */
+.fc { --fc-border-color: #e7e0d8; --fc-today-bg-color: #f3eadf; --fc-button-bg-color: #63402b; --fc-button-border-color: #63402b;
+      --fc-button-hover-bg-color: #4a2c1d; --fc-button-hover-border-color: #4a2c1d; --fc-button-active-bg-color: #331d12;
+      --fc-button-active-border-color: #331d12; font-size: 0.85rem; }
+.fc .fc-toolbar-title { font-size: 1.05rem; font-weight: 600; }
+.fc .fc-button { padding: 0.3rem 0.6rem; font-size: 0.8rem; text-transform: none; }
+.fc .fc-event { cursor: pointer; }
+@media (max-width: 640px) {
+  .fc .fc-toolbar { flex-wrap: wrap; gap: 0.5rem; }
+}

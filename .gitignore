@@ -1,0 +1,17 @@
+# Bağımlılıklar ve derleme çıktıları
+web/node_modules/
+web/dist/
+server/pb_public/
+server/*.exe
+dist/
+
+# Veritabanı, yüklenen dosyalar, VAPID anahtarları - ASLA paylaşılmaz
+server/pb_data/
+pb_data/
+
+*.log
+.env
+.DS_Store
+
+# Claude Code yerel dosyaları
+.claude/
