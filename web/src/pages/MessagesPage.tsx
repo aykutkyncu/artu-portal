@@ -12,7 +12,7 @@ import { ChatView } from '../components/ChatView'
 import { UserPicker } from '../components/pickers'
 import { Avatar, Button, CountBadge, EmptyState, ErrorNote, Field, Input, Modal, Spinner } from '../components/ui'
 
-const DEFAULT_SETTINGS: ConversationSettings = { muted: false, archived: false }
+const DEFAULT_SETTINGS: ConversationSettings = { muted: false, archived: false, clearedAt: '' }
 
 export default function MessagesPage() {
   const { id } = useParams()
@@ -32,14 +32,17 @@ export default function MessagesPage() {
       rows<ConversationSettings & { conversation: string }>(supabase.from('conversation_settings').select('*').eq('user', me.id)).catch(() => []),
     ])
     setConversations(list)
-    setSettings(Object.fromEntries(own.map((s) => [s.conversation, { muted: s.muted, archived: s.archived }])))
+    setSettings(Object.fromEntries(own.map((s) => [s.conversation, { muted: s.muted, archived: s.archived, clearedAt: s.clearedAt }])))
   }, [me.id])
 
   const changeSettings = async (conversationId: string, patch: Partial<ConversationSettings>) => {
     const next = { ...(settings[conversationId] ?? DEFAULT_SETTINGS), ...patch }
     setSettings((prev) => ({ ...prev, [conversationId]: next }))
     await run(
-      supabase.from('conversation_settings').upsert(toRow({ user: me.id, conversation: conversationId, ...next }), { onConflict: 'user,conversation' }),
+      // Silme anı (clearedAt) sadece clear_conversation ile yazılır; burada gönderilmez.
+      supabase
+        .from('conversation_settings')
+        .upsert(toRow({ user: me.id, conversation: conversationId, muted: next.muted, archived: next.archived }), { onConflict: 'user,conversation' }),
     ).catch(() => void load())
   }
 
@@ -65,16 +68,26 @@ export default function MessagesPage() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [load])
 
+  // Kişinin sildiği sohbet, yeni mesaj gelene kadar listede görünmez.
+  const visible = useMemo(
+    () =>
+      conversations?.filter((c) => {
+        const clearedAt = settings[c.id]?.clearedAt
+        return !clearedAt || Date.parse(c.lastMessageAt) > Date.parse(clearedAt)
+      }),
+    [conversations, settings],
+  )
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLocaleLowerCase('tr')
-    return conversations?.filter(
+    return visible?.filter(
       (c) =>
         Boolean(settings[c.id]?.archived) === showArchived &&
         (!needle || conversationTitle(c, me.id, usersById).toLocaleLowerCase('tr').includes(needle)),
     )
-  }, [conversations, settings, showArchived, q, me.id, usersById])
+  }, [visible, settings, showArchived, q, me.id, usersById])
 
-  const archived = conversations?.filter((c) => settings[c.id]?.archived) ?? []
+  const archived = visible?.filter((c) => settings[c.id]?.archived) ?? []
   const archivedUnread = archived.reduce((sum, c) => sum + (unread.conversations[c.id] ?? 0), 0)
 
   const active = conversations?.find((c) => c.id === id) ?? null
@@ -159,6 +172,11 @@ export default function MessagesPage() {
             settings={settings[active.id] ?? DEFAULT_SETTINGS}
             onSettings={(patch) => void changeSettings(active.id, patch)}
             onChanged={() => void load().catch(() => undefined)}
+            onCleared={() => {
+              // Liste hemen güncellensin; kesin silme anı ardından sunucudan okunur.
+              setSettings((prev) => ({ ...prev, [active.id]: { ...(prev[active.id] ?? DEFAULT_SETTINGS), archived: false, clearedAt: new Date().toISOString() } }))
+              void load().catch(() => undefined)
+            }}
           />
         )}
         {id && conversations && !active && <EmptyState icon={<MessageCircle className="size-10" />} title="Sohbet bulunamadı" />}

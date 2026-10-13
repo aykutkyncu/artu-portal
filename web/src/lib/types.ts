@@ -71,6 +71,8 @@ export interface Message extends Rec {
 export interface ConversationSettings {
   muted: boolean
   archived: boolean
+  /** Kişinin sohbeti sildiği an; öncesindeki mesajlar ona görünmez. Silmediyse boş. */
+  clearedAt: string
 }
 
 export type EventCategory = 'meeting' | 'shipment' | 'production' | 'leave' | 'training' | 'visit' | 'other'

@@ -25,7 +25,7 @@ render.yaml                       Render yayın ayarı
 1. https://supabase.com → **New project**. Bölge: **Frankfurt**. Veritabanı şifresini saklayın.
    - Portal için **ayrı bir proje** açın (depo sevk projesinin içine kurmayın). Ücretsiz hesapta proje sayısı sınırlıdır; yer yoksa panel uyarır.
 2. **Authentication → Sign In / Providers → Email**: **Allow new users to sign up** seçeneğini **kapatın**. Kullanıcıları sadece admin açar.
-3. **SQL Editor → New query**: `supabase/migrations/` klasöründeki dosyaları **numara sırasıyla**, her birinin tamamını yapıştırıp **Run** diyerek çalıştırın. `001_baslangic.sql` sonunda iki satır çıkmalı: tablo sayısı **13**, dosya alanı sayısı **2**. `002_kullanici_silme.sql` sonunda tek satır: **1**. `003_mesaj_ozellikleri.sql` sonunda üç satır: hepsi **evet**.
+3. **SQL Editor → New query**: `supabase/migrations/` klasöründeki dosyaları **numara sırasıyla**, her birinin tamamını yapıştırıp **Run** diyerek çalıştırın. `001_baslangic.sql` sonunda iki satır çıkmalı: tablo sayısı **13**, dosya alanı sayısı **2**. `002_kullanici_silme.sql` sonunda tek satır: **1**. `003_mesaj_ozellikleri.sql` sonunda üç satır, `004_sohbet_silme.sql` sonunda iki satır: hepsi **evet**.
 4. İlk admin hesabını açın (şifre en az 10 karakter). Aynı ekranda:
    ```sql
    select private.create_user('aykut', 'GucluBirSifre!2026', 'Aykut Koyuncu', 'admin');
@@ -101,7 +101,7 @@ Fonksiyonun kodu değişirse panelde yeniden yapıştırıp Deploy etmek gerekir
 
 İşten ayrılan çalışanı **pasifleştirin**: pasif kullanıcı hiçbir veriye erişemez ve tekrar giriş yapamaz, mesaj geçmişi korunur. **Kullanıcıyı sil** düğmesi sadece hiç kayıt bırakmamış hesaplarda (ör. yanlış açılmış hesap) çalışır; mesajı, duyurusu ya da görevi olan hesap silinemez. Admin, düzenleme ekranından herkesin şifresini değiştirebilir.
 
-Mesajlar özeldir: bir sohbeti sadece üyeleri görür, admin de göremez.
+Mesajlar özeldir: bir sohbeti sadece üyeleri görür, admin de göremez. Sohbet ekranındaki üç nokta menüsünden **Sohbeti sil** diyen kişi yazışmayı sadece kendi görünümünden kaldırır; karşı taraf görmeye devam eder ve yeni mesaj gelince sohbet listede yeniden belirir.
 
 ---
 

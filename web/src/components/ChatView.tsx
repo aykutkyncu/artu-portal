@@ -16,6 +16,8 @@ import { Attachments, Avatar, Button, ErrorNote, Field, IconButton, Input, Modal
 const PAGE_SIZE = 50
 const ONLINE_WINDOW_MS = 5 * 60 * 1000
 const PRESENCE_REFRESH_MS = 60 * 1000
+/** Başlıktaki sohbet menüsünün `menu` durumundaki kimliği (mesaj id'leriyle çakışmaz). */
+const HEADER_MENU = 'header'
 
 /** Mesajları id'ye göre tekilleştirip gönderim zamanına göre sıralar. */
 function mergeMessages(current: Message[], incoming: Message[]): Message[] {
@@ -46,14 +48,18 @@ export function ChatView({
   settings,
   onSettings,
   onChanged,
+  onCleared,
 }: {
   conversation: Conversation
   settings: ConversationSettings
   onSettings: (patch: Partial<ConversationSettings>) => void
   /** Mesaj gönderildi, düzenlendi ya da silindi: sohbet listesindeki özet tazelensin. */
   onChanged: () => void
+  /** Kişi sohbeti kendi görünümünden sildi. */
+  onCleared: () => void
 }) {
   const me = useMe()
+  const navigate = useNavigate()
   const { usersById, setActiveConversation, markConversationRead } = useData()
   const [messages, setMessages] = useState<Message[] | null>(null)
   const [hasOlder, setHasOlder] = useState(false)
@@ -290,6 +296,19 @@ export function ChatView({
     }
   }
 
+  /** Sohbetin o ana kadarki bütün mesajlarını sadece kendi görünümünden kaldırır; sohbet listeden düşer. */
+  const clearConversation = async () => {
+    setMenu(null)
+    if (!window.confirm('Bu sohbet ve içindeki tüm mesajlar sizin görünümünüzden silinsin mi? Karşı taraf yazışmayı görmeye devam eder. Bu işlem geri alınamaz.')) return
+    try {
+      await rpc('clear_conversation', { p_conversation: conversation.id })
+      onCleared()
+      navigate('/mesajlar')
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Başlık */}
@@ -316,17 +335,46 @@ export function ChatView({
                   : peer?.title || ''}
           </div>
         </div>
-        <IconButton label={settings.muted ? 'Bildirimleri aç' : 'Sessize al'} onClick={() => onSettings({ muted: !settings.muted })}>
-          {settings.muted ? <BellOff className="size-5 text-amber-600" /> : <Bell className="size-5" />}
-        </IconButton>
-        <IconButton label={settings.archived ? 'Arşivden çıkar' : 'Arşivle'} onClick={() => onSettings({ archived: !settings.archived })}>
-          {settings.archived ? <ArchiveRestore className="size-5 text-amber-600" /> : <Archive className="size-5" />}
-        </IconButton>
-        {isGroup && (
-          <IconButton label="Grup bilgisi" onClick={() => setIsInfoOpen(true)}>
-            <Info className="size-5" />
+        {settings.muted && <BellOff className="size-4 shrink-0 text-amber-600" aria-label="Sessizde" />}
+        {/* Üç nokta: sohbet seçenekleri */}
+        <div data-message-menu className="relative">
+          <IconButton label="Sohbet seçenekleri" onClick={() => setMenu(menu?.id === HEADER_MENU ? null : { id: HEADER_MENU, up: false, alignRight: true })}>
+            <EllipsisVertical className="size-5" />
           </IconButton>
-        )}
+          {menu?.id === HEADER_MENU && (
+            <div role="menu" className="absolute top-full right-0 z-20 mt-1 min-w-48 overflow-hidden rounded-xl border border-stone-200 bg-white py-1 shadow-lg">
+              {isGroup && (
+                <MenuItem
+                  onClick={() => {
+                    setMenu(null)
+                    setIsInfoOpen(true)
+                  }}
+                >
+                  <Info className="size-4" /> Grup bilgisi
+                </MenuItem>
+              )}
+              <MenuItem
+                onClick={() => {
+                  setMenu(null)
+                  onSettings({ muted: !settings.muted })
+                }}
+              >
+                {settings.muted ? <Bell className="size-4" /> : <BellOff className="size-4" />} {settings.muted ? 'Bildirimleri aç' : 'Sessize al'}
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  setMenu(null)
+                  onSettings({ archived: !settings.archived })
+                }}
+              >
+                {settings.archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />} {settings.archived ? 'Arşivden çıkar' : 'Arşivle'}
+              </MenuItem>
+              <MenuItem danger onClick={() => void clearConversation()}>
+                <Trash2 className="size-4" /> Sohbeti sil
+              </MenuItem>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Mesajlar */}
