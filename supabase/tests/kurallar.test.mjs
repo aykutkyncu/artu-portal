@@ -8,8 +8,11 @@ const MIG = new URL('../migrations/001_baslangic.sql', import.meta.url)
 const db = new PGlite({ extensions: { pgcrypto } })
 await db.exec(fs.readFileSync(new URL('./stub.sql', import.meta.url), 'utf8'))
 const sql = fs.readFileSync(MIG, 'utf8').replace(/^create extension if not exists pg_net.*$/m, '')
+const sql2 = fs.readFileSync(new URL('../migrations/002_kullanici_silme.sql', import.meta.url), 'utf8')
 await db.exec(sql)
+await db.exec(sql2)
 await db.exec(sql) // tekrar çalıştırılabilir olmalı
+await db.exec(sql2)
 console.log('migration x2 OK')
 
 let pass = 0
@@ -202,6 +205,26 @@ await put(S1, 'ekler', `tasks/${T}/a.pdf`)
 ok('görev eki: görevi gören görür', (await ekler(M, 'tasks/%')).length === 1 && (await ekler(S3, 'tasks/%')).length === 0)
 await put(S1, 'avatars', `${S1}/a.jpg`)
 await rejects('başkasının avatarı yüklenemez', put(S1, 'avatars', `${S2}/a.jpg`), /row-level/)
+
+console.log('kullanıcı silme')
+const X = await mk('silinecek', 'Silinecek Kişi', 'staff')
+const G2 = (await rows(S1, "insert into conversations(type,name,members,created_by) values ('group','Üçlü',$1,$2) returning id", [[S1, S2, X], S1]))[0].id
+const G3 = (await rows(X, "insert into conversations(type,name,members,created_by) values ('group','İkili',$1,$2) returning id", [[X, S3], X]))[0].id
+const DX = (await rows(X, 'select (direct_conversation($1)).id', [S3]))[0].id
+await as(M, (x) => x('update tasks set assignees=$2 where id=$1', [T, [S1, X]]))
+await as(M, (x) => x('update events set participants=$2 where id=$1', [E, [S2, X]]))
+await as(M, (x) => x('insert into shifts("user",date,kind) values ($1,\'2026-10-16\',\'off\')', [X]))
+await fails('personel kullanıcı silemez', S1, 'select admin_delete_user($1)', [X], /yetkiniz yok/)
+await fails('admin kendini silemez', A, 'select admin_delete_user($1)', [A], /Kendi hesabınızı/)
+await fails('kayıt bırakmış kullanıcı silinemez', A, 'select admin_delete_user($1)', [S1], /pasifleştirin/)
+await fails('olmayan kullanıcı', A, 'select admin_delete_user($1)', ['00000000-0000-0000-0000-000000000009'], /bulunamadı/)
+await as(A, (x) => x('select admin_delete_user($1)', [X]))
+ok('hesap ve profil silinir', (await db.query('select 1 from auth.users where id=$1', [X])).rows.length === 0 && (await db.query('select 1 from profiles where id=$1', [X])).rows.length === 0)
+ok('gruptan çıkarılır', JSON.stringify((await one('select members from conversations where id=$1', [G2])).members) === JSON.stringify([S1, S2]))
+ok('boş sohbetleri kapanır', (await db.query('select 1 from conversations where id = any($1)', [[G3, DX]])).rows.length === 0)
+ok('görev ve etkinlikten çıkarılır', !(await one('select assignees from tasks where id=$1', [T])).assignees.includes(X) && !(await one('select participants from events where id=$1', [E])).participants.includes(X))
+ok('vardiyası silinir', (await db.query('select 1 from shifts where "user"=$1', [X])).rows.length === 0)
+await as(S1, (x) => x('select leave_conversation($1)', [G2]))
 
 console.log('pasif kullanıcı ve birim silme')
 await as(A, (x) => x('update profiles set active=false where id=$1', [S2]))

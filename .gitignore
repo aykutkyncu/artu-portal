@@ -13,3 +13,7 @@ dist/
 
 # Claude Code yerel dosyaları
 .claude/
+
+# Yerel notlar ve gizli bilgiler - ASLA paylaşılmaz
+*ifre*.txt
+*.env.local.txt

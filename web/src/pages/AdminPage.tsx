@@ -192,6 +192,21 @@ function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onC
     }
   }
 
+  // Kayıt bırakmış kullanıcı silinemez (veritabanı reddeder); o hesaplar pasifleştirilir.
+  const removeUser = async () => {
+    if (!window.confirm(`${initial.name} kalıcı olarak silinsin mi? Bu işlem geri alınamaz.`)) return
+    setIsSaving(true)
+    setError(null)
+    try {
+      await rpc('admin_delete_user', { p_user: initial.id })
+      onSaved()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
     <Modal
       open
@@ -200,6 +215,11 @@ function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onC
       title={isNew ? 'Yeni kullanıcı' : `${initial.name} düzenle`}
       footer={
         <>
+          {!isNew && !isSelf && (
+            <Button variant="danger" onClick={removeUser} disabled={isSaving} className="mr-auto">
+              Kullanıcıyı sil
+            </Button>
+          )}
           <Button variant="secondary" onClick={onClose}>
             Vazgeç
           </Button>
