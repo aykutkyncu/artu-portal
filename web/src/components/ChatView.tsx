@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
 import clsx from 'clsx'
-import { Archive, ArchiveRestore, ArrowLeft, Bell, BellOff, EyeOff, Info, Paperclip, Pencil, SendHorizontal, Trash2, Users as UsersIcon, X, Loader2 } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, Bell, BellOff, EllipsisVertical, EyeOff, Info, Paperclip, Pencil, SendHorizontal, Smile, Trash2, Users as UsersIcon, X, Loader2 } from 'lucide-react'
 import { isSameDay } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
@@ -24,16 +24,17 @@ function mergeMessages(current: Message[], incoming: Message[]): Message[] {
   return [...byId.values()].sort((a, b) => Date.parse(a.created) - Date.parse(b.created))
 }
 
-/** Mesaja dokununca altında açılan işlem düğmesi. */
-function MessageAction({ danger, onClick, children }: { danger?: boolean; onClick: () => void; children: ReactNode }) {
+// Emoji seçici ağırdır; ilk kez açıldığında yüklenir.
+const EmojiPanel = lazy(() => import('./EmojiPanel'))
+
+/** Mesajın üç nokta menüsündeki satır. */
+function MenuItem({ danger, onClick, children }: { danger?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={onClick}
-      className={clsx(
-        'inline-flex items-center gap-1 rounded-full border bg-white px-2.5 py-1 text-xs shadow-sm',
-        danger ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-stone-200 text-stone-600 hover:bg-stone-50',
-      )}
+      className={clsx('flex w-full items-center gap-2 px-3 py-2 text-left text-sm whitespace-nowrap', danger ? 'text-red-600 hover:bg-red-50' : 'text-stone-700 hover:bg-stone-50')}
     >
       {children}
     </button>
@@ -61,8 +62,9 @@ export function ChatView({
   const [isSending, setIsSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isInfoOpen, setIsInfoOpen] = useState(false)
-  /** İşlem düğmeleri açık olan mesaj */
-  const [activeId, setActiveId] = useState<string | null>(null)
+  /** Üç nokta menüsü açık olan mesaj. Menü ekrandan taşmasın diye yönü düğmenin yerine göre seçilir. */
+  const [menu, setMenu] = useState<{ id: string; up: boolean; alignRight: boolean } | null>(null)
+  const [isEmojiOpen, setIsEmojiOpen] = useState(false)
   /** Metni düzenlenmekte olan mesaj */
   const [editing, setEditing] = useState<Message | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -201,6 +203,7 @@ export function ChatView({
       setMessages((prev) => (prev && !prev.some((m) => m.id === created.id) ? [...prev, created] : prev))
       setText('')
       setFiles([])
+      setIsEmojiOpen(false)
       onChanged()
       textareaRef.current?.focus()
     } catch (err) {
@@ -222,12 +225,36 @@ export function ChatView({
   // Ekli mesajın metni tamamen silinebilir; eksiz mesaj boş bırakılamaz.
   const canSend = editing ? Boolean(text.trim()) || editing.attachments.length > 0 : Boolean(text.trim()) || files.length > 0
 
+  // Menü dışına dokununca ya da Esc ile kapanır.
+  useEffect(() => {
+    if (!menu) return
+    const onPointer = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-message-menu]')) setMenu(null)
+    }
+    const onKey = (e: globalThis.KeyboardEvent) => e.key === 'Escape' && setMenu(null)
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
+
   const startEdit = (m: Message) => {
     setEditing(m)
     setText(m.text)
     setFiles([])
-    setActiveId(null)
+    setMenu(null)
     textareaRef.current?.focus()
+  }
+
+  /** Emojiyi imlecin olduğu yere ekler. */
+  const insertEmoji = (emoji: string) => {
+    const el = textareaRef.current
+    const start = el?.selectionStart ?? text.length
+    const end = el?.selectionEnd ?? text.length
+    setText(text.slice(0, start) + emoji + text.slice(end))
+    requestAnimationFrame(() => el?.setSelectionRange(start + emoji.length, start + emoji.length))
   }
 
   const cancelEdit = () => {
@@ -237,6 +264,7 @@ export function ChatView({
 
   /** Kendi mesajını herkes için siler. */
   const deleteForAll = async (m: Message) => {
+    setMenu(null)
     if (!window.confirm('Mesaj herkes için silinsin mi?')) return
     try {
       await remove('messages', m.id)
@@ -251,6 +279,7 @@ export function ChatView({
 
   /** Mesajı sadece kendi görünümünden kaldırır; karşı taraf görmeye devam eder. */
   const hideForMe = async (m: Message) => {
+    setMenu(null)
     if (!window.confirm('Mesaj sadece sizin görünümünüzden kaldırılsın mı? Karşı taraf görmeye devam eder.')) return
     try {
       await run(supabase.from('message_hides').insert(toRow({ user: me.id, message: m.id })))
@@ -334,18 +363,53 @@ export function ChatView({
                 )}
                 <div className={clsx('group flex items-end gap-2', mine ? 'justify-end' : 'justify-start', !grouped && 'mt-2')}>
                   {!mine && isGroup && (grouped ? <span className="w-7" /> : <Avatar user={sender} size={28} />)}
-                  {/* Mesaja dokununca işlemler açılır (ekteki bağlantıya dokunmak eki açar). */}
                   <div
-                    onClick={(e) => {
-                      if ((e.target as HTMLElement).closest('a')) return
-                      setActiveId(activeId === m.id ? null : m.id)
-                    }}
                     className={clsx(
-                      'max-w-[80%] cursor-pointer rounded-2xl px-3 py-2 shadow-sm sm:max-w-[65%]',
+                      'relative max-w-[80%] rounded-2xl py-2 pr-8 pl-3 shadow-sm sm:max-w-[65%]',
                       mine ? 'rounded-br-md bg-cocoa-700 text-white' : 'rounded-bl-md bg-white text-stone-800',
-                      (activeId === m.id || editing?.id === m.id) && 'ring-2 ring-amber-400',
+                      (menu?.id === m.id || editing?.id === m.id) && 'ring-2 ring-amber-400',
                     )}
                   >
+                    {/* Üç nokta: mesaj seçenekleri */}
+                    <div data-message-menu className="absolute top-1 right-1">
+                      <button
+                        type="button"
+                        aria-label="Mesaj seçenekleri"
+                        aria-haspopup="menu"
+                        aria-expanded={menu?.id === m.id}
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          setMenu(menu?.id === m.id ? null : { id: m.id, up: rect.bottom > window.innerHeight - 220, alignRight: rect.left > window.innerWidth / 2 })
+                        }}
+                        className={clsx('flex size-6 items-center justify-center rounded-full', mine ? 'text-cocoa-200 hover:bg-white/15' : 'text-stone-400 hover:bg-stone-100')}
+                      >
+                        <EllipsisVertical className="size-4" />
+                      </button>
+                      {menu?.id === m.id && (
+                        <div
+                          role="menu"
+                          className={clsx(
+                            'absolute z-20 min-w-40 overflow-hidden rounded-xl border border-stone-200 bg-white py-1 shadow-lg',
+                            menu.alignRight ? 'right-0' : 'left-0',
+                            menu.up ? 'bottom-full mb-1' : 'top-full mt-1',
+                          )}
+                        >
+                          {mine && (
+                            <MenuItem onClick={() => startEdit(m)}>
+                              <Pencil className="size-4" /> Düzenle
+                            </MenuItem>
+                          )}
+                          <MenuItem onClick={() => void hideForMe(m)}>
+                            <EyeOff className="size-4" /> Benden sil
+                          </MenuItem>
+                          {mine && (
+                            <MenuItem danger onClick={() => void deleteForAll(m)}>
+                              <Trash2 className="size-4" /> Herkesten sil
+                            </MenuItem>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     {!mine && isGroup && !grouped && <div className="mb-0.5 text-xs font-semibold text-cocoa-600">{sender?.name ?? 'Eski kullanıcı'}</div>}
                     {m.text && <p className="text-sm break-words whitespace-pre-wrap">{m.text}</p>}
                     <Attachments files={m.attachments} compact />
@@ -355,23 +419,7 @@ export function ChatView({
                     </div>
                   </div>
                 </div>
-                {activeId === m.id && (
-                  <div className={clsx('mt-1 flex flex-wrap gap-1.5', mine ? 'justify-end' : 'justify-start', !mine && isGroup && 'pl-9')}>
-                    {mine && (
-                      <MessageAction onClick={() => startEdit(m)}>
-                        <Pencil className="size-3.5" /> Düzenle
-                      </MessageAction>
-                    )}
-                    <MessageAction onClick={() => void hideForMe(m)}>
-                      <EyeOff className="size-3.5" /> Benden sil
-                    </MessageAction>
-                    {mine && (
-                      <MessageAction danger onClick={() => void deleteForAll(m)}>
-                        <Trash2 className="size-3.5" /> Herkesten sil
-                      </MessageAction>
-                    )}
-                  </div>
-                )}
+
               </div>
             )
           })}
@@ -383,6 +431,13 @@ export function ChatView({
         {error && (
           <div className="mx-auto mb-2 max-w-3xl">
             <ErrorNote message={error} />
+          </div>
+        )}
+        {isEmojiOpen && (
+          <div className="mx-auto mb-2 max-w-3xl">
+            <Suspense fallback={<div className="flex h-[340px] items-center justify-center text-sm text-stone-400">Emojiler yükleniyor…</div>}>
+              <EmojiPanel onPick={insertEmoji} />
+            </Suspense>
           </div>
         )}
         {editing && (
@@ -423,6 +478,15 @@ export function ChatView({
               }}
             />
           </label>
+          <button
+            type="button"
+            onClick={() => setIsEmojiOpen(!isEmojiOpen)}
+            aria-label="Emoji"
+            aria-pressed={isEmojiOpen}
+            className={clsx('flex size-10 shrink-0 items-center justify-center rounded-full hover:bg-stone-100', isEmojiOpen ? 'text-cocoa-700' : 'text-stone-500')}
+          >
+            <Smile className="size-5" />
+          </button>
           <textarea
             ref={textareaRef}
             value={text}
