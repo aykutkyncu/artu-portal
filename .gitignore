@@ -1,16 +1,14 @@
 # Bağımlılıklar ve derleme çıktıları
-web/node_modules/
+node_modules/
 web/dist/
-server/pb_public/
-server/*.exe
-dist/
 
-# Veritabanı, yüklenen dosyalar, VAPID anahtarları - ASLA paylaşılmaz
-server/pb_data/
-pb_data/
+# Eski PocketBase sürümünden kalan yerel dosyalar (exe, veritabanı, dağıtım paketi)
+server/
+dist/
 
 *.log
 .env
+*.local
 .DS_Store
 
 # Claude Code yerel dosyaları

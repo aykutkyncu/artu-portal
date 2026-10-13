@@ -4,7 +4,7 @@ const COMPRESSIBLE = /^image\/(jpeg|png|webp)$/
 
 /**
  * Telefon fotoğraflarını yüklemeden önce küçültür (genelde 4-8 MB → 300-600 KB).
- * Sunucu diskini korur ve mobil veride hızlı yükleme sağlar.
+ * Depolama alanını (ücretsiz planda sınırlı) korur ve mobil veride hızlı yükleme sağlar.
  */
 export async function compressImage(file: File): Promise<File> {
   if (!COMPRESSIBLE.test(file.type) || file.size < 400 * 1024) return file
@@ -25,22 +25,26 @@ export async function compressImage(file: File): Promise<File> {
   }
 }
 
-/** Kayıt verisini (ekler dahil) PocketBase'in beklediği FormData'ya çevirir. */
-export async function toFormData(data: Record<string, unknown>, files: File[] = [], fileField = 'attachments'): Promise<FormData> {
-  const fd = new FormData()
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined) continue
-    if (Array.isArray(value)) {
-      if (value.length === 0) fd.append(key, '')
-      value.forEach((v) => fd.append(key, String(v)))
-    } else if (typeof value === 'boolean') {
-      fd.append(key, value ? 'true' : 'false')
-    } else {
-      fd.append(key, value === null ? '' : String(value))
-    }
+const RESIZABLE = /^image\/(jpeg|png|webp|gif)$/
+
+/** Resmi en uzun kenarı `maxDimension` olacak şekilde JPEG'e çevirir (önizleme, profil fotoğrafı). Resim değilse null. */
+export async function resizeImage(file: File, maxDimension: number, quality: number): Promise<Blob | null> {
+  if (!RESIZABLE.test(file.type)) return null
+  try {
+    const bitmap = await createImageBitmap(file)
+    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(bitmap.width * scale)
+    canvas.height = Math.round(bitmap.height * scale)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    // Saydam PNG'ler JPEG'de siyah çıkmasın
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    bitmap.close()
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality))
+  } catch {
+    return null
   }
-  const compressed = await Promise.all(files.map(compressImage))
-  // "+" soneki mevcut eklerin üzerine yazmadan yenilerini ekler.
-  compressed.forEach((f) => fd.append(`${fileField}+`, f))
-  return fd
 }

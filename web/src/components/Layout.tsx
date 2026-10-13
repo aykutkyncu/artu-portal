@@ -17,7 +17,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { isAdmin } from '../lib/pb'
+import { isAdmin } from '../lib/db'
 import { ROLE_LABEL } from '../lib/labels'
 import { Avatar, CountBadge, Modal } from './ui'
 

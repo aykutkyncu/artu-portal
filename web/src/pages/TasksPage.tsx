@@ -5,7 +5,7 @@ import { CalendarDays, ClipboardList, MessageSquare, Plus } from 'lucide-react'
 import { startOfDay } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { isManager, pb } from '../lib/pb'
+import { isManager, rows, subscribe, supabase, update } from '../lib/db'
 import { fmt, parseDate } from '../lib/format'
 import { TASK_PRIORITY, TASK_STATUS } from '../lib/labels'
 import type { Task, TaskStatus } from '../lib/types'
@@ -28,14 +28,13 @@ export default function TasksPage() {
   const openId = params.get('id')
 
   const load = useCallback(async () => {
-    const parts: string[] = []
-    if (scope === 'mine') parts.push(pb.filter('assignees.id ?= {:me}', { me: me.id }))
-    if (scope === 'created') parts.push(pb.filter('createdBy = {:me}', { me: me.id }))
-    if (department) parts.push(pb.filter('department = {:d}', { d: department }))
+    let query = supabase.from('tasks').select('*')
+    if (scope === 'mine') query = query.contains('assignees', [me.id])
+    if (scope === 'created') query = query.eq('created_by', me.id)
+    if (department) query = query.eq('department', department)
     // Tamamlananlardan sadece son 30 gün
-    if (!showDone) parts.push(pb.filter('(status != "done" || completedAt >= {:since})', { since: new Date(Date.now() - 30 * 864e5).toISOString().replace('T', ' ') }))
-    const list = await pb.collection('tasks').getFullList<Task>({ filter: parts.join(' && '), sort: 'dueDate,-created', expand: 'assignees,createdBy' })
-    setTasks(list)
+    if (!showDone) query = query.or(`status.neq.done,completed_at.gte."${new Date(Date.now() - 30 * 864e5).toISOString()}"`)
+    setTasks(await rows<Task>(query.order('due_date', { nullsFirst: true }).order('created', { ascending: false })))
   }, [scope, department, showDone, me.id])
 
   useEffect(() => {
@@ -43,8 +42,7 @@ export default function TasksPage() {
   }, [load])
 
   useEffect(() => {
-    const unsub = pb.collection('tasks').subscribe('*', () => void load().catch(() => undefined))
-    return () => void unsub.then((fn) => fn()).catch(() => undefined)
+    return subscribe('tasks', () => void load().catch(() => undefined))
   }, [load])
 
   const byStatus = useMemo(() => {
@@ -55,7 +53,7 @@ export default function TasksPage() {
 
   const changeStatus = async (t: Task, status: TaskStatus) => {
     setTasks((prev) => prev?.map((x) => (x.id === t.id ? { ...x, status } : x)) ?? prev)
-    await pb.collection('tasks').update(t.id, { status }).catch(() => void load())
+    await update('tasks', t.id, { status }).catch(() => void load())
   }
 
   const scopes: Array<{ key: Scope; label: string }> = [
@@ -167,6 +165,8 @@ export default function TasksPage() {
 }
 
 function TaskCard({ task, onOpen, onStatus }: { task: Task; onOpen: () => void; onStatus: (s: TaskStatus) => void }) {
+  const { usersById } = useData()
+  const assignees = task.assignees.map((id) => usersById.get(id)).filter((u) => u !== undefined)
   const due = parseDate(task.dueDate)
   const overdue = due && task.status !== 'done' && due.getTime() < startOfDay(new Date()).getTime()
   return (
@@ -180,7 +180,7 @@ function TaskCard({ task, onOpen, onStatus }: { task: Task; onOpen: () => void; 
       </button>
       <div className="mt-2.5 flex items-center justify-between gap-2">
         <div className="flex -space-x-1.5">
-          {task.expand?.assignees?.slice(0, 4).map((u) => <Avatar key={u.id} user={u} size={22} className="ring-2 ring-white" />)}
+          {assignees.slice(0, 4).map((u) => <Avatar key={u.id} user={u} size={22} className="ring-2 ring-white" />)}
         </div>
         <div className="flex items-center gap-2">
           {due && (

@@ -3,9 +3,6 @@ import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// Geliştirme sırasında API isteklerini yerel PocketBase'e yönlendir.
-const API_TARGET = process.env.API_TARGET ?? 'http://127.0.0.1:8090'
-
 export default defineConfig({
   plugins: [
     react(),
@@ -39,15 +36,7 @@ export default defineConfig({
       devOptions: { enabled: false },
     }),
   ],
-  server: {
-    proxy: {
-      '/api': { target: API_TARGET, ws: true, changeOrigin: true },
-      '/_': { target: API_TARGET, changeOrigin: true },
-    },
-  },
   build: {
-    outDir: '../server/pb_public',
-    emptyOutDir: true,
     chunkSizeWarningLimit: 1500,
   },
 })

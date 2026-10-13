@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react'
 import { Bell, BellOff, Camera, Download, LogOut, Monitor, Smartphone } from 'lucide-react'
 import { useAuth, useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, pb } from '../lib/pb'
+import { errorMessage, loginEmail, supabase, update } from '../lib/db'
+import { uploadAvatar as storeAvatar } from '../lib/files'
 import { ROLE_LABEL } from '../lib/labels'
-import { compressImage } from '../lib/upload'
 import { enablePush, getPushState, isStandalone, type PushState } from '../lib/push'
 import { Avatar, Button, ErrorNote, Field, Input, PageHeader } from '../components/ui'
 
 export default function ProfilePage() {
   const me = useMe()
-  const { logout } = useAuth()
+  const { logout, refresh } = useAuth()
   const { departmentsById, reloadDirectory } = useData()
   const [form, setForm] = useState({ name: me.name, title: me.title, phone: me.phone })
   const [msg, setMsg] = useState<string | null>(null)
@@ -22,8 +22,8 @@ export default function ProfilePage() {
     setError(null)
     setMsg(null)
     try {
-      await pb.collection('users').update(me.id, { name: form.name.trim(), title: form.title, phone: form.phone })
-      await reloadDirectory()
+      await update('profiles', me.id, { name: form.name.trim(), title: form.title, phone: form.phone })
+      await Promise.all([refresh(), reloadDirectory()])
       setMsg('Bilgileriniz kaydedildi.')
     } catch (err) {
       setError(errorMessage(err))
@@ -35,10 +35,8 @@ export default function ProfilePage() {
   const uploadAvatar = async (file: File | undefined) => {
     if (!file) return
     try {
-      const fd = new FormData()
-      fd.append('avatar', await compressImage(file))
-      await pb.collection('users').update(me.id, fd)
-      await reloadDirectory()
+      await update('profiles', me.id, { avatar: await storeAvatar(me.id, file, me.avatar) })
+      await Promise.all([refresh(), reloadDirectory()])
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -195,9 +193,11 @@ function PasswordCard() {
     setError(null)
     setMsg(null)
     try {
-      await pb.collection('users').update(me.id, { oldPassword, password, passwordConfirm: password })
-      // Şifre değişince oturum anahtarı yenilenir; yeni şifreyle tekrar giriş yap.
-      await pb.collection('users').authWithPassword(me.username, password)
+      // Mevcut şifre, onunla yeniden giriş yapılarak doğrulanır.
+      const check = await supabase.auth.signInWithPassword({ email: loginEmail(me.username), password: oldPassword })
+      if (check.error) throw new Error('Mevcut şifre hatalı.')
+      const { error: updateError } = await supabase.auth.updateUser({ password })
+      if (updateError) throw updateError
       setOld('')
       setPassword('')
       setMsg('Şifreniz değiştirildi.')

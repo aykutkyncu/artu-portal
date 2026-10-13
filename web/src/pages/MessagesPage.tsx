@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { MessageCirclePlus, Search, Users as UsersIcon, MessageCircle } from 'lucide-react'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, pb } from '../lib/pb'
+import { errorMessage, fromRow, insert, rows, rpc, subscribe, supabase } from '../lib/db'
 import { fmtShort } from '../lib/format'
 import type { Conversation } from '../lib/types'
 import { conversationPeer, conversationTitle } from '../lib/conversations'
@@ -21,25 +21,19 @@ export default function MessagesPage() {
   const [isNewOpen, setIsNewOpen] = useState(false)
 
   const load = useCallback(async () => {
-    const list = await pb.collection('conversations').getFullList<Conversation>({ sort: '-lastMessageAt', expand: 'members' })
-    setConversations(list)
+    setConversations(await rows<Conversation>(supabase.from('conversations').select('*').order('last_message_at', { ascending: false })))
   }, [])
 
   useEffect(() => {
-    const unsub = pb.collection('conversations').subscribe<Conversation>(
-      '*',
-      (e) => {
-        setConversations((prev) => {
-          if (!prev) return prev
-          const rest = prev.filter((c) => c.id !== e.record.id)
-          if (e.action === 'delete' || !e.record.members.includes(me.id)) return rest
-          return [e.record, ...rest].sort((a, b) => (b.lastMessageAt ?? '').localeCompare(a.lastMessageAt ?? ''))
-        })
-      },
-      { expand: 'members' },
-    )
-    return () => void unsub.then((fn) => fn()).catch(() => undefined)
-  }, [load, me.id])
+    return subscribe<Conversation>('conversations', (e) => {
+      setConversations((prev) => {
+        if (!prev) return prev
+        const rest = prev.filter((c) => c.id !== e.record.id)
+        if (e.action === 'delete' || !e.record.members.includes(me.id)) return rest
+        return [e.record, ...rest].sort((a, b) => Date.parse(b.lastMessageAt) - Date.parse(a.lastMessageAt))
+      })
+    })
+  }, [me.id])
 
   // Sohbet değişince (yeni sohbet, gruptan ayrılma) ve uygulama öne gelince listeyi tazele;
   // gerçek zamanlı bağlantı kopmuş olsa bile liste güncel kalır.
@@ -147,12 +141,12 @@ function NewConversationModal({ onClose }: { onClose: () => void }) {
     try {
       if (mode === 'direct') {
         if (!selected[0]) throw new Error('Bir kişi seçin.')
-        const c = await pb.send<Conversation>('/api/artu/conversations/direct', { method: 'POST', body: { userId: selected[0] } })
+        const c = fromRow<Conversation>(await rpc('direct_conversation', { p_user: selected[0] }))
         navigate(`/mesajlar/${c.id}`)
       } else {
         if (!name.trim()) throw new Error('Grup adı yazın.')
         if (selected.length < 1) throw new Error('En az bir kişi seçin.')
-        const c = await pb.collection('conversations').create<Conversation>({ type: 'group', name: name.trim(), members: [me.id, ...selected], createdBy: me.id })
+        const c = await insert<Conversation>('conversations', { type: 'group', name: name.trim(), members: [me.id, ...selected], createdBy: me.id })
         navigate(`/mesajlar/${c.id}`)
       }
       onClose()

@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Factory, Plus, Pencil } from 'lucide-react'
 import { addWeeks, isToday } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, isManager, pb } from '../lib/pb'
+import { errorMessage, insert, isManager, remove as removeRecord, rows, subscribe, supabase, update } from '../lib/db'
 import { fmt, isoDay, weekDays } from '../lib/format'
 import { PLAN_STATUS, UNITS } from '../lib/labels'
 import type { PlanStatus, ProductionPlan } from '../lib/types'
@@ -14,6 +14,7 @@ const STATUSES = Object.keys(PLAN_STATUS) as PlanStatus[]
 
 export default function ProductionPage() {
   const me = useMe()
+  const { usersById } = useData()
   const canEdit = isManager(me)
   const [anchor, setAnchor] = useState(new Date())
   const [plans, setPlans] = useState<ProductionPlan[] | null>(null)
@@ -25,18 +26,15 @@ export default function ProductionPage() {
 
   const load = useCallback(async () => {
     setPlans(
-      await pb.collection('production_plans').getFullList<ProductionPlan>({
-        filter: pb.filter('date >= {:from} && date <= {:to}', { from, to }),
-        sort: 'date,line,product',
-        expand: 'responsible',
-      }),
+      await rows<ProductionPlan>(
+        supabase.from('production_plans').select('*').gte('date', from).lte('date', to).order('date').order('line').order('product'),
+      ),
     )
   }, [from, to])
 
   useEffect(() => {
     void load().catch(() => setPlans([]))
-    const unsub = pb.collection('production_plans').subscribe('*', () => void load().catch(() => undefined))
-    return () => void unsub.then((fn) => fn()).catch(() => undefined)
+    return subscribe('production_plans', () => void load().catch(() => undefined))
   }, [load])
 
   // Haftalık ürün toplamları
@@ -112,7 +110,7 @@ export default function ProductionPage() {
                             </div>
                             <div className="mt-0.5 text-xs text-stone-500">
                               {p.line && `${p.line} · `}
-                              {p.expand?.responsible?.name && `Sorumlu: ${p.expand.responsible.name}`}
+                              {usersById.get(p.responsible) && `Sorumlu: ${usersById.get(p.responsible)!.name}`}
                             </div>
                             <div className="mt-1.5 flex items-center gap-2">
                               <div className="h-1.5 flex-1 rounded-full bg-stone-100">
@@ -198,8 +196,8 @@ function PlanEditor({ initial, onClose, onSaved }: { initial: Partial<Production
     setError(null)
     try {
       const data = { ...form, product: form.product.trim(), department: me.department }
-      if (initial.id) await pb.collection('production_plans').update(initial.id, data)
-      else await pb.collection('production_plans').create({ ...data, createdBy: me.id })
+      if (initial.id) await update('production_plans', initial.id, data)
+      else await insert('production_plans', { ...data, createdBy: me.id })
       onSaved()
     } catch (err) {
       setError(errorMessage(err))
@@ -211,7 +209,7 @@ function PlanEditor({ initial, onClose, onSaved }: { initial: Partial<Production
   const remove = async () => {
     if (!initial.id || !window.confirm('Plan silinsin mi?')) return
     try {
-      await pb.collection('production_plans').delete(initial.id)
+      await removeRecord('production_plans', initial.id)
       onSaved()
     } catch (err) {
       setError(errorMessage(err))

@@ -5,11 +5,11 @@ import { ArrowLeft, Info, Paperclip, SendHorizontal, Trash2, Users as UsersIcon,
 import { isSameDay } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, pb } from '../lib/pb'
+import { errorMessage, insert, maybeRow, remove, rows, rpc, subscribe, supabase, update } from '../lib/db'
+import { MAX_ATTACHMENTS, removeAttachments, uploadAttachments } from '../lib/files'
 import { fmt, fromNow, parseDate } from '../lib/format'
 import { conversationPeer, conversationTitle } from '../lib/conversations'
-import { toFormData } from '../lib/upload'
-import type { Conversation, Message } from '../lib/types'
+import type { Conversation, Message, User } from '../lib/types'
 import { UserPicker } from './pickers'
 import { Attachments, Avatar, Button, ErrorNote, Field, IconButton, Input, Modal } from './ui'
 
@@ -21,7 +21,7 @@ const PRESENCE_REFRESH_MS = 60 * 1000
 function mergeMessages(current: Message[], incoming: Message[]): Message[] {
   const byId = new Map(current.map((m) => [m.id, m]))
   incoming.forEach((m) => byId.set(m.id, m))
-  return [...byId.values()].sort((a, b) => a.created.localeCompare(b.created))
+  return [...byId.values()].sort((a, b) => Date.parse(a.created) - Date.parse(b.created))
 }
 
 export function ChatView({ conversation }: { conversation: Conversation }) {
@@ -57,7 +57,10 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
   const peerId = peer?.id
   useEffect(() => {
     if (!peerId) return
-    const refresh = () => void pb.collection('users').getOne<typeof peer & object>(peerId).then(setFreshPeer).catch(() => undefined)
+    const refresh = () =>
+      void maybeRow<User>(supabase.from('profiles').select('*').eq('id', peerId).maybeSingle())
+        .then((u) => u && setFreshPeer(u))
+        .catch(() => undefined)
     refresh()
     const t = setInterval(refresh, PRESENCE_REFRESH_MS)
     return () => clearInterval(t)
@@ -74,32 +77,29 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
 
     const fetchLatest = async () => {
       try {
-        const res = await pb.collection('messages').getList<Message>(1, PAGE_SIZE, {
-          filter: pb.filter('conversation = {:c}', { c: conversation.id }),
-          sort: '-created',
-        })
+        const latest = await rows<Message>(
+          supabase.from('messages').select('*').eq('conversation', conversation.id).order('created', { ascending: false }).limit(PAGE_SIZE),
+        )
         if (cancelled) return
-        setMessages((prev) => mergeMessages(prev ?? [], res.items))
-        setHasOlder((h) => h || res.totalPages > 1)
+        setMessages((prev) => mergeMessages(prev ?? [], latest))
+        setHasOlder((h) => h || latest.length === PAGE_SIZE)
       } catch (err) {
         if (!cancelled) setError(errorMessage(err))
       }
     }
     void fetchLatest()
 
-    const unsub = pb.collection('messages').subscribe<Message>(
-      '*',
-      (e) => {
-        if (e.action === 'create') {
-          // İlk sorgu dönmeden gelen mesaj kaybolmasın: boş listeye de eklenir, sonra birleştirilir.
-          setMessages((prev) => mergeMessages(prev ?? [], [e.record]))
-          if (e.record.sender !== me.id) markRead()
-        }
-        if (e.action === 'update') setMessages((prev) => prev?.map((m) => (m.id === e.record.id ? e.record : m)) ?? prev)
-        if (e.action === 'delete') setMessages((prev) => prev?.filter((m) => m.id !== e.record.id) ?? prev)
-      },
-      { filter: pb.filter('conversation = {:c}', { c: conversation.id }) },
-    )
+    // Silme bildiriminde sadece mesajın id'si gelir; bu yüzden sohbete göre süzme burada yapılır.
+    const unsub = subscribe<Message>('messages', (e) => {
+      if (e.action === 'delete') return setMessages((prev) => prev?.filter((m) => m.id !== e.record.id) ?? prev)
+      if (e.record.conversation !== conversation.id) return
+      if (e.action === 'create') {
+        // İlk sorgu dönmeden gelen mesaj kaybolmasın: boş listeye de eklenir, sonra birleştirilir.
+        setMessages((prev) => mergeMessages(prev ?? [], [e.record]))
+        if (e.record.sender !== me.id) markRead()
+      }
+      if (e.action === 'update') setMessages((prev) => prev?.map((m) => (m.id === e.record.id ? e.record : m)) ?? prev)
+    })
 
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return
@@ -111,7 +111,7 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
       cancelled = true
       setActiveConversation(null)
       document.removeEventListener('visibilitychange', onVisible)
-      void unsub.then((fn) => fn()).catch(() => undefined)
+      unsub()
     }
   }, [conversation.id, me.id, markRead, setActiveConversation])
 
@@ -127,13 +127,18 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
     const el = scrollRef.current
     const prevHeight = el?.scrollHeight ?? 0
     try {
-      const res = await pb.collection('messages').getList<Message>(1, PAGE_SIZE, {
-        filter: pb.filter('conversation = {:c} && created < {:before}', { c: conversation.id, before: messages[0]!.created }),
-        sort: '-created',
-      })
+      const older = await rows<Message>(
+        supabase
+          .from('messages')
+          .select('*')
+          .eq('conversation', conversation.id)
+          .lt('created', messages[0]!.created)
+          .order('created', { ascending: false })
+          .limit(PAGE_SIZE),
+      )
       stickToBottom.current = false
-      setMessages((prev) => mergeMessages(prev ?? [], res.items))
-      setHasOlder(res.totalPages > 1)
+      setMessages((prev) => mergeMessages(prev ?? [], older))
+      setHasOlder(older.length === PAGE_SIZE)
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - prevHeight
       })
@@ -147,11 +152,12 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
   const send = async (e?: FormEvent) => {
     e?.preventDefault()
     if (isSending || (!text.trim() && files.length === 0)) return
+    if (files.length > MAX_ATTACHMENTS) return setError(`Bir mesaja en fazla ${MAX_ATTACHMENTS} dosya eklenebilir.`)
     setIsSending(true)
     setError(null)
     try {
-      const data = await toFormData({ conversation: conversation.id, sender: me.id, text: text.trim() }, files)
-      const created = await pb.collection('messages').create<Message>(data)
+      const attachments = await uploadAttachments('messages', conversation.id, files)
+      const created = await insert<Message>('messages', { conversation: conversation.id, sender: me.id, text: text.trim(), attachments })
       stickToBottom.current = true
       setMessages((prev) => (prev && !prev.some((m) => m.id === created.id) ? [...prev, created] : prev))
       setText('')
@@ -175,7 +181,13 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
 
   const removeMessage = async (m: Message) => {
     if (!window.confirm('Mesaj silinsin mi?')) return
-    await pb.collection('messages').delete(m.id).catch((err) => setError(errorMessage(err)))
+    try {
+      await remove('messages', m.id)
+      setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev)
+      void removeAttachments(m.attachments)
+    } catch (err) {
+      setError(errorMessage(err))
+    }
   }
 
   return (
@@ -263,7 +275,7 @@ export function ChatView({ conversation }: { conversation: Conversation }) {
                   >
                     {!mine && isGroup && !grouped && <div className="mb-0.5 text-xs font-semibold text-cocoa-600">{sender?.name ?? 'Eski kullanıcı'}</div>}
                     {m.text && <p className="text-sm break-words whitespace-pre-wrap">{m.text}</p>}
-                    <Attachments record={m} files={m.attachments} compact />
+                    <Attachments files={m.attachments} compact />
                     <div className={clsx('mt-0.5 text-right text-[10px]', mine ? 'text-cocoa-200' : 'text-stone-400')}>{fmt(m.created, 'HH:mm')}</div>
                   </div>
                 </div>
@@ -344,7 +356,7 @@ function GroupInfoModal({ conversation, onClose }: { conversation: Conversation;
     setIsSaving(true)
     setError(null)
     try {
-      await pb.collection('conversations').update(conversation.id, { name: name.trim(), members: Array.from(new Set([me.id, ...members])) })
+      await update('conversations', conversation.id, { name: name.trim(), members: Array.from(new Set([me.id, ...members])) })
       onClose()
     } catch (err) {
       setError(errorMessage(err))
@@ -356,7 +368,7 @@ function GroupInfoModal({ conversation, onClose }: { conversation: Conversation;
   const leave = async () => {
     if (!window.confirm('Gruptan ayrılmak istiyor musunuz?')) return
     try {
-      await pb.send(`/api/artu/conversations/${conversation.id}/leave`, { method: 'POST' })
+      await rpc('leave_conversation', { p_conversation: conversation.id })
       navigate('/mesajlar')
     } catch (err) {
       setError(errorMessage(err))

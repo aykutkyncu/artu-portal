@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, Copy } from 'lucide-react'
 import { addDays, addWeeks, isToday } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, isManager, pb } from '../lib/pb'
+import { errorMessage, insert, isManager, remove as removeRecord, rows as fetchRows, run, supabase, toRow, update } from '../lib/db'
 import { fmt, isoDay, weekDays } from '../lib/format'
 import { SHIFT_KIND } from '../lib/labels'
 import type { Shift, ShiftKind, User } from '../lib/types'
@@ -28,8 +28,7 @@ export default function ShiftsPage() {
   const to = isoDay(days[6]!)
 
   const load = useCallback(async () => {
-    const list = await pb.collection('shifts').getFullList<Shift>({ filter: pb.filter('date >= {:from} && date <= {:to}', { from, to }) })
-    setShifts(list)
+    setShifts(await fetchRows<Shift>(supabase.from('shifts').select('*').gte('date', from).lte('date', to)))
   }, [from, to])
 
   useEffect(() => {
@@ -47,18 +46,16 @@ export default function ShiftsPage() {
     try {
       const prevFrom = isoDay(addDays(days[0]!, -7))
       const prevTo = isoDay(addDays(days[6]!, -7))
-      const prev = await pb.collection('shifts').getFullList<Shift>({ filter: pb.filter('date >= {:from} && date <= {:to}', { from: prevFrom, to: prevTo }) })
+      const prev = await fetchRows<Shift>(supabase.from('shifts').select('*').gte('date', prevFrom).lte('date', prevTo))
       const rowIds = new Set(rows.map((r) => r.id))
-      const batch = pb.createBatch()
-      let count = 0
+      const copies: Array<Record<string, unknown>> = []
       for (const s of prev) {
         if (!rowIds.has(s.user)) continue
         const date = isoDay(addDays(new Date(`${s.date}T12:00:00`), 7))
         if (index.has(`${s.user}|${date}`)) continue
-        batch.collection('shifts').create({ user: s.user, date, kind: s.kind, startTime: s.startTime, endTime: s.endTime, department: s.department, note: s.note })
-        count++
+        copies.push(toRow({ user: s.user, date, kind: s.kind, startTime: s.startTime, endTime: s.endTime, department: s.department, note: s.note }))
       }
-      if (count) await batch.send()
+      if (copies.length) await run(supabase.from('shifts').insert(copies))
       await load()
     } catch (err) {
       setError(errorMessage(err))
@@ -214,8 +211,8 @@ function ShiftEditor({ cell, onClose, onSaved }: { cell: { user: User; date: str
     setError(null)
     const data = { user: cell.user.id, date: cell.date, kind, startTime: hasTimes ? startTime : '', endTime: hasTimes ? endTime : '', note, department: cell.user.department }
     try {
-      if (cell.shift) await pb.collection('shifts').update(cell.shift.id, data)
-      else await pb.collection('shifts').create(data)
+      if (cell.shift) await update('shifts', cell.shift.id, data)
+      else await insert('shifts', data)
       onSaved()
     } catch (err) {
       setError(errorMessage(err))
@@ -227,7 +224,7 @@ function ShiftEditor({ cell, onClose, onSaved }: { cell: { user: User; date: str
   const clear = async () => {
     if (!cell.shift) return onClose()
     try {
-      await pb.collection('shifts').delete(cell.shift.id)
+      await removeRecord('shifts', cell.shift.id)
       onSaved()
     } catch (err) {
       setError(errorMessage(err))

@@ -12,14 +12,12 @@ import { Plus, MapPin, Clock, Users as UsersIcon, Pencil, Trash2 } from 'lucide-
 import { addHours } from 'date-fns'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, isManager, pb } from '../lib/pb'
+import { errorMessage, insert, isManager, remove as removeRecord, row, rows, subscribe, supabase, update } from '../lib/db'
 import { fmt, fmtDateTime, fromLocalInput, parseDate, toLocalInput, isoDay } from '../lib/format'
 import { EVENT_CATEGORY } from '../lib/labels'
 import type { CalendarEvent, EventCategory } from '../lib/types'
 import { DepartmentPicker, UserPicker } from '../components/pickers'
 import { Avatar, Button, Checkbox, ErrorNote, Field, Input, Modal, PageHeader, Select, Textarea } from '../components/ui'
-
-const toPb = (d: Date) => d.toISOString().replace('T', ' ')
 
 export default function CalendarPage() {
   const me = useMe()
@@ -32,11 +30,16 @@ export default function CalendarPage() {
 
   const fetchEvents = useCallback(
     async (info: EventSourceFuncArg): Promise<EventInput[]> => {
-      const list = await pb.collection('events').getFullList<CalendarEvent>({
-        filter: pb.filter('start < {:end} && (end >= {:start} || start >= {:start})', { start: toPb(info.start), end: toPb(info.end) }),
-        expand: 'participants,createdBy',
-        sort: 'start',
-      })
+      // Görünen aralığa denk gelenler: aralık bitmeden başlamış ve (aralıkta ya da sonra bitiyor / aralıkta başlıyor)
+      const from = info.start.toISOString()
+      const list = await rows<CalendarEvent>(
+        supabase
+          .from('events')
+          .select('*')
+          .lt('start', info.end.toISOString())
+          .or(`end.gte."${from}",start.gte."${from}"`)
+          .order('start'),
+      )
       return list
         .filter((e) => !hidden.has(e.category))
         .map((e) => ({
@@ -64,8 +67,7 @@ export default function CalendarPage() {
   useEffect(() => {
     const id = params.get('id')
     if (!id) return
-    pb.collection('events')
-      .getOne<CalendarEvent>(id, { expand: 'participants,createdBy' })
+    row<CalendarEvent>(supabase.from('events').select('*').eq('id', id).single())
       .then((e) => {
         setSelected(e)
         calendarRef.current?.getApi().gotoDate(parseDate(e.start) ?? new Date())
@@ -74,13 +76,12 @@ export default function CalendarPage() {
   }, [params])
 
   useEffect(() => {
-    const unsub = pb.collection('events').subscribe('*', () => refetch())
-    return () => void unsub.then((fn) => fn()).catch(() => undefined)
+    return subscribe('events', () => refetch())
   }, [])
 
   const openNew = (start?: Date, allDay = false) => {
     const s = start ?? new Date()
-    setEditing({ title: '', start: toPb(s), end: toPb(addHours(s, 1)), allDay, category: 'meeting', participants: [], departments: [] })
+    setEditing({ title: '', start: s.toISOString(), end: addHours(s, 1).toISOString(), allDay, category: 'meeting', participants: [], departments: [] })
   }
 
   const canEdit = (e: CalendarEvent) => e.createdBy === me.id || isManager(me)
@@ -163,12 +164,14 @@ export default function CalendarPage() {
 }
 
 function EventDetail({ event, canEdit, onClose, onEdit, onDeleted }: { event: CalendarEvent; canEdit: boolean; onClose: () => void; onEdit: () => void; onDeleted: () => void }) {
+  const { usersById } = useData()
   const [error, setError] = useState<string | null>(null)
   const cat = EVENT_CATEGORY[event.category]
+  const participants = event.participants.map((id) => usersById.get(id)).filter((u) => u !== undefined)
   const remove = async () => {
     if (!window.confirm('Etkinlik silinsin mi?')) return
     try {
-      await pb.collection('events').delete(event.id)
+      await removeRecord('events', event.id)
       onDeleted()
     } catch (err) {
       setError(errorMessage(err))
@@ -209,13 +212,13 @@ function EventDetail({ event, canEdit, onClose, onEdit, onDeleted }: { event: Ca
           </p>
         )}
         {event.description && <p className="whitespace-pre-wrap text-stone-600">{event.description}</p>}
-        {(event.expand?.participants?.length ?? 0) > 0 && (
+        {participants.length > 0 && (
           <div>
             <p className="mb-1.5 flex items-center gap-2 text-xs font-medium text-stone-500">
               <UsersIcon className="size-4" /> Katılımcılar
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {event.expand?.participants?.map((u) => (
+              {participants.map((u) => (
                 <span key={u.id} className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 py-0.5 pr-2.5 pl-0.5 text-xs">
                   <Avatar user={u} size={20} /> {u.name}
                 </span>
@@ -223,7 +226,7 @@ function EventDetail({ event, canEdit, onClose, onEdit, onDeleted }: { event: Ca
             </div>
           </div>
         )}
-        <p className="text-xs text-stone-400">Ekleyen: {event.expand?.createdBy?.name}</p>
+        <p className="text-xs text-stone-400">Ekleyen: {usersById.get(event.createdBy)?.name}</p>
         <ErrorNote message={error} />
       </div>
     </Modal>
@@ -260,8 +263,8 @@ function EventEditor({ initial, onClose, onSaved }: { initial: Partial<CalendarE
       end: form.end ? fromLocalInput(form.allDay ? `${form.end.slice(0, 10)}T23:59` : form.end) : '',
     }
     try {
-      if (initial.id) await pb.collection('events').update(initial.id, payload)
-      else await pb.collection('events').create({ ...payload, createdBy: me.id })
+      if (initial.id) await update('events', initial.id, payload)
+      else await insert('events', { ...payload, createdBy: me.id })
       onSaved()
     } catch (err) {
       setError(errorMessage(err))

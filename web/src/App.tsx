@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { Spinner } from './components/ui'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { DataProvider } from './context/DataContext'
-import { isAdmin } from './lib/pb'
+import { isAdmin, isConfigured } from './lib/db'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 
@@ -32,7 +32,8 @@ function RequireAdmin({ children }: { children: ReactNode }) {
 }
 
 function AppRoutes() {
-  const { user } = useAuth()
+  const { user, isReady } = useAuth()
+  if (!isReady) return <Spinner className="min-h-dvh items-center" />
   return (
     <Suspense fallback={<Spinner />}>
       <Routes>
@@ -70,7 +71,22 @@ function AppRoutes() {
   )
 }
 
+/** Supabase bilgileri girilmeden derlenmişse (Render ortam değişkenleri eksik) boş ekran yerine ne yapılacağını söyler. */
+function SetupNotice() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-stone-50 px-6 text-center">
+      <div className="max-w-md space-y-2">
+        <h1 className="text-lg font-semibold text-stone-900">Kurulum tamamlanmamış</h1>
+        <p className="text-sm text-stone-600">
+          Supabase bağlantı bilgileri (VITE_SUPABASE_URL ve VITE_SUPABASE_ANON_KEY) girilmemiş. Adımlar KURULUM.md dosyasında anlatılıyor.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  if (!isConfigured) return <SetupNotice />
   return (
     <ErrorBoundary>
       <BrowserRouter>

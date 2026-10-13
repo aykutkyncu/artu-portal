@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Building2, Pencil, Plus, Search, Trash2, UserPlus } from 'lucide-react'
-import { useMe } from '../context/AuthContext'
+import { useAuth, useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, pb } from '../lib/pb'
+import { errorMessage, insert, remove as removeRecord, rows, rpc, supabase, update } from '../lib/db'
 import { fromNow } from '../lib/format'
 import { ROLE_LABEL } from '../lib/labels'
 import type { Department, Role, User } from '../lib/types'
@@ -53,7 +53,7 @@ function UsersAdmin() {
   const [editing, setEditing] = useState<Partial<User> | null>(null)
 
   const load = useCallback(async () => {
-    setUsers(await pb.collection('users').getFullList<User>({ sort: 'name' }))
+    setUsers(await rows<User>(supabase.from('profiles').select('*').order('name')))
   }, [])
   useEffect(() => {
     void load().catch(() => setUsers([]))
@@ -139,6 +139,7 @@ function UsersAdmin() {
 
 function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onClose: () => void; onSaved: () => void }) {
   const me = useMe()
+  const { refresh } = useAuth()
   const { departments } = useData()
   const isNew = !initial.id
   const [form, setForm] = useState({
@@ -164,10 +165,25 @@ function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onC
     setIsSaving(true)
     setError(null)
     try {
-      const data: Record<string, unknown> = { ...form, name: form.name.trim(), username: form.username.trim().toLowerCase(), emailVisibility: true }
-      if (password) Object.assign(data, { password, passwordConfirm: password })
-      if (isNew) await pb.collection('users').create(data)
-      else await pb.collection('users').update(initial.id!, data)
+      const username = form.username.trim().toLowerCase()
+      if (isNew) {
+        // Giriş hesabı ve profil birlikte açılır (veritabanı fonksiyonu; sadece admin çağırabilir).
+        const id = await rpc<string>('admin_create_user', {
+          p_username: username,
+          p_password: password,
+          p_name: form.name.trim(),
+          p_role: form.role,
+          p_department: form.department || null,
+          p_title: form.title,
+          p_phone: form.phone,
+          p_email: form.email.trim(),
+        })
+        if (!form.active) await update('profiles', id, { active: false })
+      } else {
+        await update('profiles', initial.id!, { ...form, name: form.name.trim(), username, email: form.email.trim() })
+        if (password) await rpc('admin_reset_password', { p_user: initial.id, p_password: password })
+        if (isSelf) await refresh()
+      }
       onSaved()
     } catch (err) {
       setError(errorMessage(err))
@@ -268,7 +284,7 @@ function DepartmentsAdmin() {
     if (!name.trim()) return
     setError(null)
     try {
-      await pb.collection('departments').create({ name: name.trim() })
+      await insert('departments', { name: name.trim() })
       setName('')
       await reloadDirectory()
     } catch (err) {
@@ -279,7 +295,7 @@ function DepartmentsAdmin() {
   const rename = async () => {
     if (!editing) return
     try {
-      await pb.collection('departments').update(editing.id, { name: editing.name.trim() })
+      await update('departments', editing.id, { name: editing.name.trim() })
       setEditing(null)
       await reloadDirectory()
     } catch (err) {
@@ -292,7 +308,7 @@ function DepartmentsAdmin() {
     if (count > 0) return setError(`"${d.name}" biriminde ${count} kişi var. Önce kişileri başka birime taşıyın.`)
     if (!window.confirm(`"${d.name}" birimi silinsin mi?`)) return
     try {
-      await pb.collection('departments').delete(d.id)
+      await removeRecord('departments', d.id)
       await reloadDirectory()
     } catch (err) {
       setError(errorMessage(err))

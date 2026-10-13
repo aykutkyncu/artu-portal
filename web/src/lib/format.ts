@@ -1,7 +1,7 @@
 import { format, formatDistanceToNowStrict, isToday, isYesterday, parseISO, isValid, startOfWeek, addDays } from 'date-fns'
 import { tr } from 'date-fns/locale'
 
-/** PocketBase tarihleri "2026-10-09 12:00:00.000Z" biçimindedir. */
+/** Veritabanı tarihleri ISO biçimindedir: "2026-10-09T12:00:00+00:00". */
 export function parseDate(value: string | Date | null | undefined): Date | null {
   if (!value) return null
   if (value instanceof Date) return value
@@ -42,7 +42,7 @@ export function weekDays(anchor: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(start, i))
 }
 
-/** <input type="datetime-local"> değeri ↔ PocketBase UTC tarih */
+/** <input type="datetime-local"> değeri ↔ veritabanı (UTC) tarihi */
 export function toLocalInput(value: string | null | undefined): string {
   const d = parseDate(value)
   return d ? format(d, "yyyy-MM-dd'T'HH:mm") : ''
@@ -50,7 +50,7 @@ export function toLocalInput(value: string | null | undefined): string {
 
 export function fromLocalInput(value: string): string {
   if (!value) return ''
-  return new Date(value).toISOString().replace('T', ' ')
+  return new Date(value).toISOString()
 }
 
 export function initials(name: string | undefined): string {

@@ -1,0 +1,12 @@
+{
+  "name": "artu-portal-supabase-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node kurallar.test.mjs && node bildirim.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.9",
+    "http_ece": "^1.2.1"
+  }
+}

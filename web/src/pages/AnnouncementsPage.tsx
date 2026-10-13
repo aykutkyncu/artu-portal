@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { Megaphone, Pin, Plus, Paperclip, Search, CheckCircle2 } from 'lucide-react'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { isManager, pb } from '../lib/pb'
+import { isManager, rows, searchFilter, subscribe, supabase } from '../lib/db'
 import { fromNow } from '../lib/format'
 import { PRIORITY } from '../lib/labels'
 import { sanitize } from '../lib/richtext'
@@ -22,7 +22,7 @@ function excerpt(html: string): string {
 
 export default function AnnouncementsPage() {
   const me = useMe()
-  const { departmentsById } = useData()
+  const { departmentsById, usersById } = useData()
   const [items, setItems] = useState<Announcement[] | null>(null)
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(1)
@@ -31,36 +31,29 @@ export default function AnnouncementsPage() {
   const [q, setQ] = useState('')
   const [isEditorOpen, setIsEditorOpen] = useState(false)
 
-  const buildFilter = useCallback(() => {
-    const parts: string[] = []
-    if (filterKey === 'pinned') parts.push('pinned = true')
-    if (filterKey === 'mine') parts.push(pb.filter('author = {:me}', { me: me.id }))
-    // "Okunmamış" sunucuda değil, okunma kayıtları geldikten sonra istemcide süzülür.
-    if (q.trim()) parts.push(pb.filter('(title ~ {:q} || body ~ {:q})', { q: q.trim() }))
-    return parts.join(' && ')
-  }, [filterKey, q, me.id])
-
   const load = useCallback(
     async (p: number) => {
-      const res = await pb.collection('announcements').getList<Announcement>(p, PER_PAGE, {
-        sort: '-pinned,-created',
-        filter: buildFilter(),
-        expand: 'author',
-      })
-      const ids = res.items.map((a) => a.id)
-      const reads = ids.length
-        ? await pb.collection('announcement_reads').getFullList<AnnouncementRead>({
-            filter: [pb.filter('user = {:me}', { me: me.id }), `(${ids.map((id) => pb.filter('announcement = {:id}', { id })).join(' || ')})`].join(' && '),
-          })
-        : []
+      let query = supabase.from('announcements').select('*')
+      if (filterKey === 'pinned') query = query.eq('pinned', true)
+      if (filterKey === 'mine') query = query.eq('author', me.id)
+      // "Okunmamış" sunucuda değil, okunma kayıtları geldikten sonra istemcide süzülür.
+      if (q.trim()) query = query.or(searchFilter(['title', 'body'], q))
+      const found = await rows<Announcement>(
+        query
+          .order('pinned', { ascending: false })
+          .order('created', { ascending: false })
+          .range((p - 1) * PER_PAGE, p * PER_PAGE - 1),
+      )
+      const ids = found.map((a) => a.id)
+      const reads = ids.length ? await rows<AnnouncementRead>(supabase.from('announcement_reads').select('*').eq('user', me.id).in('announcement', ids)) : []
       const nextRead = new Set(reads.map((r) => r.announcement))
       setReadIds((prev) => (p === 1 ? nextRead : new Set([...prev, ...nextRead])))
-      const visible = filterKey === 'unread' ? res.items.filter((a) => a.author !== me.id && !nextRead.has(a.id)) : res.items
+      const visible = filterKey === 'unread' ? found.filter((a) => a.author !== me.id && !nextRead.has(a.id)) : found
       setItems((prev) => (p === 1 || !prev ? visible : [...prev, ...visible]))
-      setHasMore(res.page < res.totalPages)
+      setHasMore(found.length === PER_PAGE)
       setPage(p)
     },
-    [buildFilter, filterKey, me.id],
+    [filterKey, q, me.id],
   )
 
   useEffect(() => {
@@ -70,16 +63,11 @@ export default function AnnouncementsPage() {
 
   // Yeni duyurular canlı olarak listenin başına eklenir.
   useEffect(() => {
-    const unsub = pb.collection('announcements').subscribe<Announcement>(
-      '*',
-      (e) => {
-        if (e.action === 'create') setItems((prev) => (prev ? [e.record, ...prev.filter((a) => a.id !== e.record.id)] : prev))
-        if (e.action === 'update') setItems((prev) => prev?.map((a) => (a.id === e.record.id ? e.record : a)) ?? prev)
-        if (e.action === 'delete') setItems((prev) => prev?.filter((a) => a.id !== e.record.id) ?? prev)
-      },
-      { expand: 'author' },
-    )
-    return () => void unsub.then((fn) => fn()).catch(() => undefined)
+    return subscribe<Announcement>('announcements', (e) => {
+      if (e.action === 'create') setItems((prev) => (prev ? [e.record, ...prev.filter((a) => a.id !== e.record.id)] : prev))
+      if (e.action === 'update') setItems((prev) => prev?.map((a) => (a.id === e.record.id ? e.record : a)) ?? prev)
+      if (e.action === 'delete') setItems((prev) => prev?.filter((a) => a.id !== e.record.id) ?? prev)
+    })
   }, [])
 
   const filters: Array<{ key: FilterKey; label: string }> = [
@@ -140,9 +128,9 @@ export default function AnnouncementsPage() {
               )}
             >
               <div className="mb-2 flex items-center gap-2.5">
-                <Avatar user={a.expand?.author} size={32} />
+                <Avatar user={usersById.get(a.author)} size={32} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-stone-800">{a.expand?.author?.name}</div>
+                  <div className="truncate text-sm font-medium text-stone-800">{usersById.get(a.author)?.name}</div>
                   <div className="text-xs text-stone-500">
                     {fromNow(a.created)} · {audience}
                   </div>

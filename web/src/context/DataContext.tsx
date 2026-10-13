@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { pb } from '../lib/pb'
-import type { Department, Message, User } from '../lib/types'
+import { rows, rpc, subscribe, supabase } from '../lib/db'
+import type { Announcement, Department, Message, User } from '../lib/types'
 import { useAuth } from './AuthContext'
 
 interface Unread {
@@ -9,7 +9,9 @@ interface Unread {
 }
 
 interface DataValue {
+  /** Aktif kullanıcılar (rehber, kişi seçiciler) */
   users: User[]
+  /** Pasifleştirilenler dahil herkes: eski kayıtların yazarı / göndereni de bulunur. */
   usersById: Map<string, User>
   departments: Department[]
   departmentsById: Map<string, Department>
@@ -27,18 +29,18 @@ const EMPTY_UNREAD: Unread = { conversations: {}, announcements: 0 }
 const HEARTBEAT_MS = 2 * 60 * 1000
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth()
-  const [users, setUsers] = useState<User[]>([])
+  const { user, logout } = useAuth()
+  const [allUsers, setAllUsers] = useState<User[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [unread, setUnread] = useState<Unread>(EMPTY_UNREAD)
   const activeConversation = useRef<string | null>(null)
 
   const reloadDirectory = useCallback(async () => {
     const [u, d] = await Promise.all([
-      pb.collection('users').getFullList<User>({ sort: 'name', filter: 'active = true' }),
-      pb.collection('departments').getFullList<Department>({ sort: 'name' }),
+      rows<User>(supabase.from('profiles').select('*').order('name')),
+      rows<Department>(supabase.from('departments').select('*').order('name')),
     ])
-    setUsers(u)
+    setAllUsers(u)
     setDepartments(d)
   }, [])
 
@@ -46,11 +48,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const reloadUnread = useCallback(async () => {
     // Geç dönen eski bir yanıt, daha yeni sayaçların üzerine yazmasın.
     const seq = ++unreadSeq.current
-    const data = await pb.send<Unread>('/api/artu/unread', {})
+    const data = await rpc<Unread>('unread_counts').catch((err: { code?: string }) => {
+      // Hesap pasifleştirilmişse veritabanı oturumu reddeder: giriş ekranına dön.
+      if (err?.code === '42501') void logout()
+      throw err
+    })
     if (seq !== unreadSeq.current) return
     if (activeConversation.current) delete data.conversations[activeConversation.current]
     setUnread(data)
-  }, [])
+  }, [logout])
 
   const markConversationRead = useCallback(async (id: string) => {
     unreadSeq.current++ // devam eden eski sayaç isteğini geçersiz kıl
@@ -60,7 +66,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       delete conversations[id]
       return { ...u, conversations }
     })
-    await pb.send(`/api/artu/conversations/${id}/read`, { method: 'POST' }).catch(() => undefined)
+    await rpc('mark_conversation_read', { p_conversation: id }).catch(() => undefined)
   }, [])
 
   const setActiveConversation = useCallback((id: string | null) => {
@@ -69,7 +75,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) {
-      setUsers([])
+      setAllUsers([])
       setDepartments([])
       setUnread(EMPTY_UNREAD)
       return
@@ -78,8 +84,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     void reloadUnread().catch(() => undefined)
 
     // Yeni mesaj / duyuru geldiğinde sayaçları canlı güncelle.
-    const unsubs: Array<Promise<() => Promise<void>>> = [
-      pb.collection('messages').subscribe<Message>('*', (e) => {
+    const unsubs = [
+      subscribe<Message>('messages', (e) => {
         if (e.action !== 'create' || e.record.sender === user.id) return
         if (e.record.conversation === activeConversation.current) return
         setUnread((u) => ({
@@ -87,7 +93,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           conversations: { ...u.conversations, [e.record.conversation]: (u.conversations[e.record.conversation] ?? 0) + 1 },
         }))
       }),
-      pb.collection('announcements').subscribe('*', (e) => {
+      subscribe<Announcement>('announcements', (e) => {
         if (e.action === 'create' && e.record.author !== user.id) setUnread((u) => ({ ...u, announcements: u.announcements + 1 }))
       }),
     ]
@@ -105,15 +111,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
     return () => {
       clearInterval(heartbeat)
       document.removeEventListener('visibilitychange', onVisible)
-      unsubs.forEach((p) => p.then((fn) => fn()).catch(() => undefined))
+      unsubs.forEach((unsub) => unsub())
     }
   }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const value = useMemo<DataValue>(() => {
     const totalUnreadMessages = Object.values(unread.conversations).reduce((a, b) => a + b, 0)
     return {
-      users,
-      usersById: new Map(users.map((u) => [u.id, u])),
+      users: allUsers.filter((u) => u.active),
+      usersById: new Map(allUsers.map((u) => [u.id, u])),
       departments,
       departmentsById: new Map(departments.map((d) => [d.id, d])),
       unread,
@@ -123,7 +129,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setActiveConversation,
       markConversationRead,
     }
-  }, [users, departments, unread, reloadDirectory, reloadUnread, setActiveConversation, markConversationRead])
+  }, [allUsers, departments, unread, reloadDirectory, reloadUnread, setActiveConversation, markConversationRead])
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>
 }

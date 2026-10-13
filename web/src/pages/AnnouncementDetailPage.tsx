@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { ArrowLeft, CheckCircle2, Pencil, Pin, Trash2, Eye } from 'lucide-react'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, isAdmin, pb } from '../lib/pb'
+import { errorMessage, insert, isAdmin, maybeRow, remove as removeRecord, row, rows, supabase } from '../lib/db'
+import { removeAttachments } from '../lib/files'
 import { fmtDateTime } from '../lib/format'
 import { PRIORITY } from '../lib/labels'
 import { sanitize } from '../lib/richtext'
@@ -15,7 +16,7 @@ export default function AnnouncementDetailPage() {
   const { id = '' } = useParams()
   const me = useMe()
   const navigate = useNavigate()
-  const { users, departmentsById, reloadUnread } = useData()
+  const { users, usersById, departmentsById, reloadUnread } = useData()
   const [item, setItem] = useState<Announcement | null>(null)
   const [reads, setReads] = useState<AnnouncementRead[]>([])
   const [isRead, setIsRead] = useState(false)
@@ -28,14 +29,13 @@ export default function AnnouncementDetailPage() {
     let cancelled = false
     ;(async () => {
       try {
-        const a = await pb.collection('announcements').getOne<Announcement>(id, { expand: 'author' })
+        const a = await row<Announcement>(supabase.from('announcements').select('*').eq('id', id).single())
         if (cancelled) return
         setItem(a)
 
-        const mine = await pb
-          .collection('announcement_reads')
-          .getFirstListItem(pb.filter('announcement = {:a} && user = {:u}', { a: id, u: me.id }))
-          .catch(() => null)
+        const mine = await maybeRow<AnnouncementRead>(
+          supabase.from('announcement_reads').select('*').eq('announcement', id).eq('user', me.id).maybeSingle(),
+        ).catch(() => null)
         const alreadyRead = Boolean(mine) || a.author === me.id
         setIsRead(alreadyRead)
 
@@ -43,7 +43,7 @@ export default function AnnouncementDetailPage() {
         if (!alreadyRead && !a.requireAck) await markRead()
 
         if (a.author === me.id || isAdmin(me)) {
-          const all = await pb.collection('announcement_reads').getFullList<AnnouncementRead>({ filter: pb.filter('announcement = {:a}', { a: id }), sort: 'created' })
+          const all = await rows<AnnouncementRead>(supabase.from('announcement_reads').select('*').eq('announcement', id).order('created'))
           if (!cancelled) setReads(all)
         }
       } catch (err) {
@@ -56,7 +56,7 @@ export default function AnnouncementDetailPage() {
   }, [id, me.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function markRead() {
-    await pb.collection('announcement_reads').create({ announcement: id, user: me.id }).catch(() => undefined)
+    await insert('announcement_reads', { announcement: id, user: me.id }).catch(() => undefined)
     setIsRead(true)
     void reloadUnread()
   }
@@ -72,7 +72,8 @@ export default function AnnouncementDetailPage() {
   const remove = async () => {
     if (!item || !window.confirm('Bu duyuru silinsin mi?')) return
     try {
-      await pb.collection('announcements').delete(item.id)
+      await removeRecord('announcements', item.id)
+      void removeAttachments(item.attachments)
       navigate('/duyurular')
     } catch (err) {
       setError(errorMessage(err))
@@ -114,14 +115,14 @@ export default function AnnouncementDetailPage() {
         </div>
         <h1 className="text-xl font-semibold tracking-tight text-stone-900 sm:text-2xl">{item.title}</h1>
         <div className="mt-3 flex items-center gap-2.5 border-b border-stone-100 pb-4">
-          <Avatar user={item.expand?.author} size={34} />
+          <Avatar user={usersById.get(item.author)} size={34} />
           <div className="text-sm">
-            <div className="font-medium text-stone-800">{item.expand?.author?.name}</div>
+            <div className="font-medium text-stone-800">{usersById.get(item.author)?.name}</div>
             <div className="text-xs text-stone-500">{fmtDateTime(item.created)}</div>
           </div>
         </div>
         <div className="prose-artu mt-4 text-[15px] leading-relaxed text-stone-700" dangerouslySetInnerHTML={{ __html: sanitize(item.body) }} />
-        <Attachments record={item} files={item.attachments} />
+        <Attachments files={item.attachments} />
 
         {item.requireAck && item.author !== me.id && (
           <div className="mt-6 rounded-xl bg-cocoa-50 p-4">

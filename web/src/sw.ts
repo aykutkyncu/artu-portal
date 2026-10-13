@@ -10,8 +10,8 @@ clientsClaim()
 cleanupOutdatedCaches()
 precacheAndRoute(self.__WB_MANIFEST)
 
-// SPA: sayfa gezintileri index.html'e düşsün; API ve dosya istekleri hariç.
-registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/api\//, /^\/_\//] }))
+// SPA: sayfa gezintileri index.html'e düşsün.
+registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html')))
 
 interface PushPayload {
   title: string

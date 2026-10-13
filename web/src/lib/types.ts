@@ -1,17 +1,21 @@
-import type { RecordModel } from 'pocketbase'
+/** Her kaydın ortak alanı. Alan adları veritabanı sütunlarının camelCase karşılığıdır (bkz. lib/db.ts). */
+export interface Rec {
+  id: string
+}
 
 export type Role = 'admin' | 'manager' | 'staff'
 
-export interface Department extends RecordModel {
+export interface Department extends Rec {
   name: string
   color: string
   description: string
 }
 
-export interface User extends RecordModel {
+export interface User extends Rec {
   username: string
   email: string
   name: string
+  /** "avatars" alanındaki dosya yolu */
   avatar: string
   role: Role
   department: string
@@ -19,12 +23,12 @@ export interface User extends RecordModel {
   phone: string
   active: boolean
   lastSeen: string
-  expand?: { department?: Department }
+  created: string
 }
 
 export type Priority = 'normal' | 'important' | 'urgent'
 
-export interface Announcement extends RecordModel {
+export interface Announcement extends Rec {
   title: string
   body: string
   author: string
@@ -35,27 +39,24 @@ export interface Announcement extends RecordModel {
   attachments: string[]
   created: string
   updated: string
-  expand?: { author?: User; departments?: Department[] }
 }
 
-export interface AnnouncementRead extends RecordModel {
+export interface AnnouncementRead extends Rec {
   announcement: string
   user: string
   created: string
-  expand?: { user?: User }
 }
 
-export interface Conversation extends RecordModel {
+export interface Conversation extends Rec {
   type: 'direct' | 'group'
   name: string
   members: string[]
   createdBy: string
   lastMessageAt: string
   lastMessageText: string
-  expand?: { members?: User[] }
 }
 
-export interface Message extends RecordModel {
+export interface Message extends Rec {
   conversation: string
   sender: string
   text: string
@@ -66,7 +67,7 @@ export interface Message extends RecordModel {
 
 export type EventCategory = 'meeting' | 'shipment' | 'production' | 'leave' | 'training' | 'visit' | 'other'
 
-export interface CalendarEvent extends RecordModel {
+export interface CalendarEvent extends Rec {
   title: string
   description: string
   start: string
@@ -77,13 +78,12 @@ export interface CalendarEvent extends RecordModel {
   departments: string[]
   participants: string[]
   createdBy: string
-  expand?: { participants?: User[]; createdBy?: User }
 }
 
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent'
 
-export interface Task extends RecordModel {
+export interface Task extends Rec {
   title: string
   description: string
   status: TaskStatus
@@ -95,20 +95,18 @@ export interface Task extends RecordModel {
   completedAt: string
   attachments: string[]
   created: string
-  expand?: { assignees?: User[]; createdBy?: User; department?: Department }
 }
 
-export interface TaskComment extends RecordModel {
+export interface TaskComment extends Rec {
   task: string
   author: string
   text: string
   created: string
-  expand?: { author?: User }
 }
 
 export type ShiftKind = 'morning' | 'evening' | 'night' | 'office' | 'off' | 'leave' | 'sick' | 'holiday'
 
-export interface Shift extends RecordModel {
+export interface Shift extends Rec {
   user: string
   date: string
   kind: ShiftKind
@@ -120,7 +118,7 @@ export interface Shift extends RecordModel {
 
 export type PlanStatus = 'planned' | 'in_progress' | 'done' | 'cancelled'
 
-export interface ProductionPlan extends RecordModel {
+export interface ProductionPlan extends Rec {
   date: string
   product: string
   productCode: string
@@ -133,5 +131,4 @@ export interface ProductionPlan extends RecordModel {
   department: string
   notes: string
   createdBy: string
-  expand?: { responsible?: User }
 }

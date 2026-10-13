@@ -3,17 +3,17 @@ import clsx from 'clsx'
 import { CalendarDays, Pencil, SendHorizontal, Trash2 } from 'lucide-react'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, isAdmin, isManager, pb } from '../lib/pb'
+import { errorMessage, insert, isAdmin, isManager, remove as removeRecord, row, rows, supabase, update } from '../lib/db'
+import { MAX_ATTACHMENTS, removeAttachments, uploadAttachments } from '../lib/files'
 import { fmt, fmtDateTime, fromNow } from '../lib/format'
 import { TASK_PRIORITY, TASK_STATUS } from '../lib/labels'
-import { toFormData } from '../lib/upload'
 import type { Task, TaskComment, TaskPriority, TaskStatus } from '../lib/types'
 import { UserPicker } from './pickers'
 import { Attachments, Avatar, Badge, Button, ErrorNote, Field, FilePicker, Input, Modal, Select, Spinner, Textarea } from './ui'
 
 export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: string; onClose: () => void; onEdit: (t: Task) => void; onChanged: () => void }) {
   const me = useMe()
-  const { departmentsById } = useData()
+  const { departmentsById, usersById } = useData()
   const [task, setTask] = useState<Task | null>(null)
   const [comments, setComments] = useState<TaskComment[]>([])
   const [text, setText] = useState('')
@@ -21,12 +21,10 @@ export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: str
   const [isSending, setIsSending] = useState(false)
 
   useEffect(() => {
-    pb.collection('tasks')
-      .getOne<Task>(taskId, { expand: 'assignees,createdBy' })
+    row<Task>(supabase.from('tasks').select('*').eq('id', taskId).single())
       .then(setTask)
       .catch((err) => setError(errorMessage(err)))
-    pb.collection('task_comments')
-      .getFullList<TaskComment>({ filter: pb.filter('task = {:t}', { t: taskId }), sort: 'created', expand: 'author' })
+    rows<TaskComment>(supabase.from('task_comments').select('*').eq('task', taskId).order('created'))
       .then(setComments)
       .catch(() => undefined)
   }, [taskId])
@@ -37,7 +35,7 @@ export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: str
   const setStatus = async (status: TaskStatus) => {
     if (!task) return
     try {
-      setTask(await pb.collection('tasks').update<Task>(task.id, { status }, { expand: 'assignees,createdBy' }))
+      setTask(await update<Task>('tasks', task.id, { status }))
       onChanged()
     } catch (err) {
       setError(errorMessage(err))
@@ -49,7 +47,7 @@ export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: str
     if (!text.trim()) return
     setIsSending(true)
     try {
-      const c = await pb.collection('task_comments').create<TaskComment>({ task: taskId, author: me.id, text: text.trim() }, { expand: 'author' })
+      const c = await insert<TaskComment>('task_comments', { task: taskId, author: me.id, text: text.trim() })
       setComments((prev) => [...prev, c])
       setText('')
     } catch (err) {
@@ -62,7 +60,8 @@ export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: str
   const remove = async () => {
     if (!task || !window.confirm('Görev silinsin mi?')) return
     try {
-      await pb.collection('tasks').delete(task.id)
+      await removeRecord('tasks', task.id)
+      void removeAttachments(task.attachments)
       onChanged()
       onClose()
     } catch (err) {
@@ -127,19 +126,19 @@ export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: str
             </div>
             <div>
               <dt className="text-xs text-stone-500">Oluşturan</dt>
-              <dd className="text-stone-800">{task.expand?.createdBy?.name}</dd>
+              <dd className="text-stone-800">{usersById.get(task.createdBy)?.name}</dd>
             </div>
           </dl>
 
           {task.description && <p className="rounded-xl bg-stone-50 p-3 text-sm whitespace-pre-wrap text-stone-700">{task.description}</p>}
-          <Attachments record={task} files={task.attachments} />
+          <Attachments files={task.attachments} />
 
           <div>
             <p className="mb-1.5 text-xs font-medium text-stone-500">Atananlar</p>
             <div className="flex flex-wrap gap-1.5">
-              {task.expand?.assignees?.map((u) => (
-                <span key={u.id} className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 py-0.5 pr-2.5 pl-0.5 text-xs">
-                  <Avatar user={u} size={20} /> {u.name}
+              {task.assignees.map((id) => (
+                <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 py-0.5 pr-2.5 pl-0.5 text-xs">
+                  <Avatar user={usersById.get(id)} size={20} /> {usersById.get(id)?.name ?? 'Eski kullanıcı'}
                 </span>
               ))}
               {!task.assignees?.length && <span className="text-sm text-stone-400">Atanmamış</span>}
@@ -153,10 +152,10 @@ export function TaskDetail({ taskId, onClose, onEdit, onChanged }: { taskId: str
             <div className="space-y-3">
               {comments.map((c) => (
                 <div key={c.id} className="flex gap-2.5">
-                  <Avatar user={c.expand?.author} size={28} />
+                  <Avatar user={usersById.get(c.author)} size={28} />
                   <div className="flex-1 rounded-xl bg-stone-50 px-3 py-2">
                     <div className="text-xs">
-                      <span className="font-medium text-stone-800">{c.expand?.author?.name}</span> <span className="text-stone-400">· {fromNow(c.created)}</span>
+                      <span className="font-medium text-stone-800">{usersById.get(c.author)?.name}</span> <span className="text-stone-400">· {fromNow(c.created)}</span>
                     </div>
                     <p className="text-sm whitespace-pre-wrap text-stone-700">{c.text}</p>
                   </div>
@@ -197,23 +196,27 @@ export function TaskEditor({ initial, onClose, onSaved }: { initial: Partial<Tas
 
   const save = async () => {
     if (!form.title.trim()) return setError('Başlık zorunludur.')
+    const kept = initial.attachments ?? []
+    if (kept.length + files.length > MAX_ATTACHMENTS) return setError(`Bir göreve en fazla ${MAX_ATTACHMENTS} dosya eklenebilir.`)
     setIsSaving(true)
     setError(null)
+    // Ekler kaydın klasörüne yüklenir; yeni görevin id'si bu yüzden burada üretilir.
+    const id = initial.id ?? crypto.randomUUID()
+    let uploaded: string[] = []
     try {
-      const data = await toFormData(
-        {
-          ...form,
-          title: form.title.trim(),
-          // Gün sonu: yerel 23:59 → son tarih o günün tamamını kapsar
-          dueDate: form.dueDate ? new Date(`${form.dueDate}T23:59:00`).toISOString().replace('T', ' ') : '',
-          ...(initial.id ? {} : { createdBy: me.id }),
-        },
-        files,
-      )
-      if (initial.id) await pb.collection('tasks').update(initial.id, data)
-      else await pb.collection('tasks').create(data)
+      uploaded = await uploadAttachments('tasks', id, files)
+      const fields = {
+        ...form,
+        title: form.title.trim(),
+        // Gün sonu: yerel 23:59 → son tarih o günün tamamını kapsar
+        dueDate: form.dueDate ? new Date(`${form.dueDate}T23:59:00`).toISOString() : '',
+        attachments: [...kept, ...uploaded],
+      }
+      if (initial.id) await update('tasks', id, fields)
+      else await insert('tasks', { id, ...fields, createdBy: me.id })
       onSaved()
     } catch (err) {
+      void removeAttachments(uploaded)
       setError(errorMessage(err))
     } finally {
       setIsSaving(false)

@@ -5,7 +5,7 @@ import { endOfDay, startOfDay } from 'date-fns'
 import clsx from 'clsx'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { pb } from '../lib/pb'
+import { maybeRow, rows, supabase } from '../lib/db'
 import { fmt, fmtShort, isoDay, parseDate } from '../lib/format'
 import { EVENT_CATEGORY, PRIORITY, SHIFT_KIND, TASK_PRIORITY, TASK_STATUS } from '../lib/labels'
 import type { Announcement, CalendarEvent, ProductionPlan, Shift, Task } from '../lib/types'
@@ -47,29 +47,40 @@ const Empty = ({ text }: { text: string }) => <p className="px-2 py-4 text-cente
 
 export default function HomePage() {
   const me = useMe()
-  const { unread, totalUnreadMessages } = useData()
+  const { unread, totalUnreadMessages, usersById } = useData()
   const [data, setData] = useState<Dashboard | null>(null)
 
   useEffect(() => {
     const today = new Date()
-    const dayStart = startOfDay(today).toISOString().replace('T', ' ')
-    const dayEnd = endOfDay(today).toISOString().replace('T', ' ')
+    const dayStart = startOfDay(today).toISOString()
+    const dayEnd = endOfDay(today).toISOString()
     const todayIso = isoDay(today)
 
     Promise.all([
-      pb.collection('announcements').getList<Announcement>(1, 4, { sort: '-pinned,-created', expand: 'author' }),
-      pb.collection('tasks').getList<Task>(1, 6, {
-        filter: pb.filter('assignees.id ?= {:me} && status != "done"', { me: me.id }),
-        sort: 'dueDate,-created',
-      }),
-      pb.collection('events').getFullList<CalendarEvent>({
-        filter: pb.filter('start <= {:end} && (end >= {:start} || (end = "" && start >= {:start}))', { start: dayStart, end: dayEnd }),
-        sort: 'start',
-      }),
-      pb.collection('shifts').getFirstListItem<Shift>(pb.filter('user = {:me} && date = {:d}', { me: me.id, d: todayIso })).catch(() => null),
-      pb.collection('production_plans').getFullList<ProductionPlan>({ filter: pb.filter('date = {:d}', { d: todayIso }), sort: 'line' }),
+      rows<Announcement>(supabase.from('announcements').select('*').order('pinned', { ascending: false }).order('created', { ascending: false }).limit(4)),
+      rows<Task>(
+        supabase
+          .from('tasks')
+          .select('*')
+          .contains('assignees', [me.id])
+          .neq('status', 'done')
+          .order('due_date', { nullsFirst: true })
+          .order('created', { ascending: false })
+          .limit(6),
+      ),
+      // Bugüne denk gelen etkinlikler: bugün bitmeden başlamış ve (bugün ya da sonra bitiyor / bitişi yoksa bugün başlıyor)
+      rows<CalendarEvent>(
+        supabase
+          .from('events')
+          .select('*')
+          .lte('start', dayEnd)
+          .or(`end.gte."${dayStart}",and(end.is.null,start.gte."${dayStart}")`)
+          .order('start'),
+      ),
+      maybeRow<Shift>(supabase.from('shifts').select('*').eq('user', me.id).eq('date', todayIso).maybeSingle()).catch(() => null),
+      rows<ProductionPlan>(supabase.from('production_plans').select('*').eq('date', todayIso).order('line')),
     ])
-      .then(([a, t, e, s, p]) => setData({ announcements: a.items, tasks: t.items, events: e, shift: s, plans: p }))
+      .then(([a, t, e, s, p]) => setData({ announcements: a, tasks: t, events: e, shift: s, plans: p }))
       .catch(() => setData({ announcements: [], tasks: [], events: [], shift: null, plans: [] }))
   }, [me.id])
 
@@ -123,7 +134,7 @@ export default function HomePage() {
                   <span className="truncate text-sm font-medium text-stone-800">{a.title}</span>
                 </div>
                 <div className="text-xs text-stone-500">
-                  {a.expand?.author?.name} · {fmtShort(a.created)}
+                  {usersById.get(a.author)?.name} · {fmtShort(a.created)}
                 </div>
               </div>
               {a.priority !== 'normal' && <Badge className={PRIORITY[a.priority].cls}>{PRIORITY[a.priority].label}</Badge>}

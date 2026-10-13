@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { MessageCircle, Phone, Search } from 'lucide-react'
 import { useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
-import { errorMessage, pb } from '../lib/pb'
+import { errorMessage, fromRow, rpc } from '../lib/db'
 import { ROLE_LABEL } from '../lib/labels'
 import type { Conversation, User } from '../lib/types'
 import { Avatar, ErrorNote, Input, PageHeader } from '../components/ui'
@@ -28,7 +28,7 @@ export default function DirectoryPage() {
 
   const message = async (u: User) => {
     try {
-      const c = await pb.send<Conversation>('/api/artu/conversations/direct', { method: 'POST', body: { userId: u.id } })
+      const c = fromRow<Conversation>(await rpc('direct_conversation', { p_user: u.id }))
       navigate(`/mesajlar/${c.id}`)
     } catch (err) {
       setError(errorMessage(err))

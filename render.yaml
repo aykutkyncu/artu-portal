@@ -1,0 +1,48 @@
+# Render yayın ayarı (Blueprint): ücretsiz statik site, GitHub deposuna bağlı.
+# main dalına her push otomatik yayınlanır. Veritabanı, giriş, dosyalar ve bildirimler Supabase'dedir (bkz. KURULUM.md).
+services:
+  - type: web
+    name: artu-portal
+    runtime: static
+    branch: main
+    rootDir: web
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      # Render panelinde bir kez girilir (Blueprint kurulurken sorar)
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      # Bildirim anahtarının açık yarısı (node web/scripts/vapid.mjs üretir)
+      - key: VITE_VAPID_PUBLIC_KEY
+        sync: false
+      - key: NODE_VERSION
+        value: "24"
+    routes:
+      # Tek sayfa uygulaması: bilinmeyen adresler (/mesajlar, /duyurular/…) uygulamanın yönlendirmesine bırakılır
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      # Yeni sürüm hemen görülsün: sayfa ve service worker önbelleğe alınmasın (dosya adları sürümlüdür)
+      - path: /*
+        name: Cache-Control
+        value: no-cache
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+      # Uygulama sadece kendi dosyalarını çalıştırır; veri için yalnızca Supabase'e bağlanır
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; img-src 'self' data: blob: https://*.supabase.co; font-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; worker-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"

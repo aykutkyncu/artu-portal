@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Lock, User as UserIcon } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { errorMessage } from '../lib/db'
 import { Button, ErrorNote, Input } from '../components/ui'
 
 export default function LoginPage() {
@@ -17,14 +18,7 @@ export default function LoginPage() {
     try {
       await login(identity, password)
     } catch (err) {
-      const status = (err as { status?: number }).status
-      setError(
-        status === 0
-          ? 'Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edin.'
-          : status === 429
-            ? 'Çok fazla deneme yapıldı. Lütfen biraz bekleyin.'
-            : 'Kullanıcı adı veya şifre hatalı ya da hesabınız pasif.',
-      )
+      setError(errorMessage(err))
     } finally {
       setIsLoading(false)
     }

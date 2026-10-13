@@ -2,8 +2,7 @@ import clsx from 'clsx'
 import { X, Loader2, Paperclip, FileText } from 'lucide-react'
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
-import type { RecordModel } from 'pocketbase'
-import { avatarUrl, displayFilename, fileUrl, isImage, useFileToken } from '../lib/pb'
+import { avatarUrl, displayFilename, isImage, useAttachmentLinks } from '../lib/files'
 import { initials } from '../lib/format'
 import type { User } from '../lib/types'
 
@@ -207,21 +206,23 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
 }
 
 /** Kayda ait dosya eklerini gösterir: resimler küçük önizleme, diğerleri bağlantı. */
-export function Attachments({ record, files, compact }: { record: RecordModel; files: string[]; compact?: boolean }) {
-  const token = useFileToken()
+export function Attachments({ files, compact }: { files: string[]; compact?: boolean }) {
+  const links = useAttachmentLinks(files)
   if (!files?.length) return null
-  if (!token) return <div className="mt-2 h-10 animate-pulse rounded-lg bg-stone-100" />
-  const images = files.filter(isImage)
-  const others = files.filter((f) => !isImage(f))
+  if (!links) return <div className="mt-2 h-10 animate-pulse rounded-lg bg-stone-100" />
+  // Bağlantısı alınamayan (silinmiş ya da artık erişilemeyen) ek gösterilmez.
+  const available = links.filter((l) => l.url)
+  const images = available.filter((l) => isImage(l.path))
+  const others = available.filter((l) => !isImage(l.path))
   return (
     <div className="mt-2 space-y-2">
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {images.map((f) => (
-            <a key={f} href={fileUrl(record, f, undefined, token)} target="_blank" rel="noopener noreferrer">
+          {images.map((l) => (
+            <a key={l.path} href={l.url!} target="_blank" rel="noopener noreferrer">
               <img
-                src={fileUrl(record, f, '400x0', token)}
-                alt={displayFilename(f)}
+                src={l.preview!}
+                alt={displayFilename(l.path)}
                 loading="lazy"
                 className={clsx('rounded-lg border border-stone-200 object-cover', compact ? 'max-h-48 max-w-[240px]' : 'max-h-72 max-w-full')}
               />
@@ -229,16 +230,16 @@ export function Attachments({ record, files, compact }: { record: RecordModel; f
           ))}
         </div>
       )}
-      {others.map((f) => (
+      {others.map((l) => (
         <a
-          key={f}
-          href={fileUrl(record, f, undefined, token)}
+          key={l.path}
+          href={l.url!}
           target="_blank"
           rel="noopener noreferrer"
           className="flex max-w-xs items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700 hover:bg-stone-50"
         >
           <FileText className="size-4 shrink-0 text-cocoa-500" />
-          <span className="truncate">{displayFilename(f)}</span>
+          <span className="truncate">{displayFilename(l.path)}</span>
         </a>
       ))}
     </div>

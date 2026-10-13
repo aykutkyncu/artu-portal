@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useMe } from '../context/AuthContext'
-import { errorMessage, pb } from '../lib/pb'
+import { errorMessage, insert, update } from '../lib/db'
+import { MAX_ATTACHMENTS, removeAttachments, uploadAttachments } from '../lib/files'
 import { htmlToPlain, plainToHtml } from '../lib/richtext'
-import { toFormData } from '../lib/upload'
 import { PRIORITY } from '../lib/labels'
 import type { Announcement, Priority } from '../lib/types'
 import { DepartmentPicker } from './pickers'
@@ -32,27 +32,23 @@ export function AnnouncementEditor({
 
   const save = async () => {
     if (!title.trim()) return setError('Başlık zorunludur.')
+    const kept = existing?.attachments ?? []
+    if (kept.length + files.length > MAX_ATTACHMENTS) return setError(`Bir duyuruya en fazla ${MAX_ATTACHMENTS} dosya eklenebilir.`)
     setError(null)
     setIsSaving(true)
+    // Ekler kaydın klasörüne yüklenir; yeni duyurunun id'si bu yüzden burada üretilir.
+    const id = existing?.id ?? crypto.randomUUID()
+    let uploaded: string[] = []
     try {
-      const data = await toFormData(
-        {
-          title: title.trim(),
-          body: plainToHtml(body),
-          departments,
-          priority,
-          pinned,
-          requireAck,
-          ...(existing ? {} : { author: me.id }),
-        },
-        files,
-      )
+      uploaded = await uploadAttachments('announcements', id, files)
+      const fields = { title: title.trim(), body: plainToHtml(body), departments, priority, pinned, requireAck, attachments: [...kept, ...uploaded] }
       const saved = existing
-        ? await pb.collection('announcements').update<Announcement>(existing.id, data, { expand: 'author' })
-        : await pb.collection('announcements').create<Announcement>(data, { expand: 'author' })
+        ? await update<Announcement>('announcements', id, fields)
+        : await insert<Announcement>('announcements', { id, ...fields, author: me.id })
       onSaved(saved)
       onClose()
     } catch (err) {
+      void removeAttachments(uploaded)
       setError(errorMessage(err))
     } finally {
       setIsSaving(false)
