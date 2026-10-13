@@ -44,13 +44,12 @@ render.yaml                       Render yayın ayarı
    git remote add origin https://github.com/<hesap>/artu-portal.git
    git push -u origin main
    ```
-2. https://dashboard.render.com → **New → Blueprint** → depoyu seçin. Render `render.yaml` dosyasını okur ve üç değer sorar:
+2. https://dashboard.render.com → **New → Blueprint** → depoyu seçin. Render `render.yaml` dosyasını okur ve iki değer sorar:
 
    | Değişken | Değer |
    |---|---|
    | `VITE_SUPABASE_URL` | Supabase Project URL |
    | `VITE_SUPABASE_ANON_KEY` | Supabase publishable (anon) key |
-   | `VITE_VAPID_PUBLIC_KEY` | 3. bölümde üretilir; şimdilik boş bırakılabilir |
 
 3. Yayın bitince adres `https://artu-portal.onrender.com` gibi olur. Açıp 1. bölümde oluşturduğunuz admin hesabıyla giriş yapın.
 
@@ -64,25 +63,19 @@ Bundan sonra `main` dalına her push birkaç dakika içinde yayınlanır. Açık
 
 Bu bölüm atlanırsa uygulama çalışır, sadece bildirim gitmez.
 
-1. Anahtarları üretin (bir kez):
+1. Anahtarları üretin (bir kez; proje kodu Project URL'deki koddur):
    ```powershell
-   node web/scripts/vapid.mjs
+   node web/scripts/vapid.mjs <proje-kodu>
    ```
-   Çıktıdaki `VAPID_PRIVATE_KEY` ve `PUSH_SECRET` gizlidir; kimseyle paylaşmayın, koda yazmayın.
+   Gizli anahtarlar ekrana yazılmaz; proje klasöründeki **`bildirim-anahtarlari.txt`** dosyasına kaydedilir (git'e gitmez). Bu dosyayı kimseyle paylaşmayın. Ekrana yazılan açık anahtar `web/src/lib/push.ts` içindeki değerle aynı olmalıdır; farklıysa oraya yazıp push edin.
 2. Supabase → **Edge Functions → Deploy a new function → Via Editor**:
    - Ad: `bildirim`
    - `supabase/functions/bildirim/index.ts` dosyasının tamamını yapıştırın.
    - **Verify JWT** seçeneğini **kapatın** (istek veritabanından gelir; ortak anahtarla doğrulanır).
    - **Deploy**.
-3. Supabase → **Edge Functions → Secrets**: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `PUSH_SECRET` değerlerini ekleyin.
-4. **SQL Editor**'de fonksiyonun adresini ve ortak anahtarı veritabanına tanıtın (`<proje-kodu>` Project URL'deki koddur):
-   ```sql
-   update private.settings
-      set push_url = 'https://<proje-kodu>.supabase.co/functions/v1/bildirim',
-          push_secret = '<PUSH_SECRET>';
-   ```
-5. Render → **Environment**: `VITE_VAPID_PUBLIC_KEY` = `VAPID_PUBLIC_KEY` değeri. Kaydedip **Manual Deploy** deyin.
-6. Deneme: telefonda uygulamayı açıp **Bildirimleri aç**'a basın, başka bir hesaptan kendinize mesaj gönderin. Gelmezse Supabase → Edge Functions → bildirim → **Logs** ekranına bakın.
+3. Supabase → **Edge Functions → Secrets**: `bildirim-anahtarlari.txt` dosyasındaki üç değeri (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `PUSH_SECRET`) ekleyin.
+4. **SQL Editor**'de aynı dosyanın 2. maddesindeki `update private.settings …` satırlarını çalıştırın. Sonuç: `bildirim ayarı | tamam`.
+5. Deneme: telefonda uygulamayı açıp **Bildirimleri aç**'a basın, başka bir hesaptan kendinize mesaj gönderin. Gelmezse Supabase → Edge Functions → bildirim → **Logs** ekranına bakın.
 
 Fonksiyonun kodu değişirse panelde yeniden yapıştırıp Deploy etmek gerekir; `git push` fonksiyonu yayınlamaz.
 
@@ -124,7 +117,13 @@ Mesajlar özeldir: bir sohbeti sadece üyeleri görür, admin de göremez.
 
 Sınırlar değişebilir; güncel değerler Supabase ve Render panellerindeki **Usage** ekranlarında görünür. Bir hafta boyunca hiç kullanılmayan ücretsiz Supabase projesi duraklatılır; panelden tek tıkla yeniden açılır.
 
-**Yedek:** ücretsiz planda Supabase otomatik yedek vermez ve portal için henüz yedek düzeni kurulmadı. Depo sevk programındaki gibi haftalık GitHub yedeği istenirse eklenebilir.
+**Yedek:** ücretsiz planda Supabase otomatik yedek vermez. Bunun yerine GitHub her pazar 23:00'te veritabanının tamamını yedekler (`.github/workflows/yedek.yml`); yedekler deponun **Actions** sekmesinde 90 gün saklanır. Çalışması için bir kez şu ayar gerekir:
+
+1. Supabase → üstteki **Connect** düğmesi → **Session pooler** bağlantı adresini kopyalayın ve içindeki `[YOUR-PASSWORD]` yerine veritabanı şifresini yazın.
+2. GitHub deposu → **Settings → Secrets and variables → Actions → New repository secret**: ad `SUPABASE_DB_URL`, değer bu adres.
+3. **Actions → Haftalık yedek → Run workflow** ile bir kez elle çalıştırıp yeşil olduğunu görün.
+
+Yüklenen dosyalar (fotoğraf, PDF) yedeğe dahil değildir. Yedek özel mesajları içerir; depo gizli kalmalıdır.
 
 ---
 

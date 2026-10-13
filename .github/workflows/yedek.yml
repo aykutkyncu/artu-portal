@@ -1,0 +1,48 @@
+# Haftalık otomatik yedek: veritabanının tamamı (kullanıcılar, mesajlar, duyurular, görevler, planlar).
+# Yedekler bu deponun Actions sekmesinde "Artifacts" olarak 90 gün saklanır.
+# Yüklenen dosyalar (fotoğraf, PDF) yedeğe DAHİL DEĞİLDİR; onlar Supabase Storage'da durur.
+# Yedek özel mesajları ve şifre özetlerini içerir: depo GİZLİ kalmalı, dosya kimseyle paylaşılmamalı.
+#
+# Gerekli gizli ayar (Settings > Secrets and variables > Actions > New repository secret):
+#   SUPABASE_DB_URL = Supabase paneli > Connect > "Session pooler" bağlantı adresi (şifre yerine yazılmış hâliyle)
+#   Veritabanı şifresi değişirse bu ayar da güncellenmeli, yoksa yedek durur.
+# Geri yükleme: gunzip ile açılan .sql dosyası boş bir Supabase projesinin SQL Editor'ünde ya da psql ile çalıştırılır.
+name: Haftalık yedek
+
+on:
+  schedule:
+    # Her pazar 20:00 UTC = 23:00 Türkiye
+    - cron: '0 20 * * 0'
+  workflow_dispatch: # Actions sekmesinden elle de çalıştırılabilir
+
+permissions:
+  contents: read
+
+jobs:
+  yedek:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Veritabanını yedekle
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL gizli ayarı girilmemiş (bkz. KURULUM.md, Yedek)."
+            exit 1
+          fi
+          mkdir yedek
+          # pg_dump sürümü veritabanından eski olamaz; bu yüzden güncel Postgres imajındaki araç kullanılır.
+          docker run --rm -e SUPABASE_DB_URL postgres:18 \
+            sh -c 'pg_dump "$SUPABASE_DB_URL" --schema=public --schema=private --schema=auth --no-owner --no-privileges' \
+            | gzip > "yedek/artu-portal-$(date +%Y-%m-%d).sql.gz"
+          # Boş ya da yarım yedek başarı sayılmasın
+          test "$(gunzip -c yedek/*.sql.gz | grep -c '^COPY public\.')" -ge 10
+          ls -lh yedek
+      - name: Yedeği sakla (90 gün)
+        uses: actions/upload-artifact@v6
+        with:
+          name: yedek-${{ github.run_number }}
+          path: yedek/
+          retention-days: 90
+          if-no-files-found: error

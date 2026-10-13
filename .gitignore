@@ -17,3 +17,4 @@ dist/
 # Yerel notlar ve gizli bilgiler - ASLA paylaşılmaz
 *ifre*.txt
 *.env.local.txt
+bildirim-anahtarlari.txt

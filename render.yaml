@@ -15,9 +15,6 @@ services:
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
-      # Bildirim anahtarının açık yarısı (node web/scripts/vapid.mjs üretir)
-      - key: VITE_VAPID_PUBLIC_KEY
-        sync: false
       - key: NODE_VERSION
         value: "24"
     routes:

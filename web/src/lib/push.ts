@@ -2,8 +2,10 @@ import { rpc, run, supabase } from './db'
 
 export type PushState = 'unsupported' | 'needs-install' | 'denied' | 'default' | 'enabled'
 
-// Bildirimleri imzalayan anahtarın açık yarısı (gizli yarısı Edge Function'da durur; bkz. KURULUM.md).
-const VAPID_PUBLIC_KEY = (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) ?? ''
+// Bildirimleri imzalayan anahtarın açık yarısı; gizli değildir (gizli yarısı Edge Function'da durur; bkz. KURULUM.md).
+// node web/scripts/vapid.mjs ile yeniden üretilirse buradaki değer de değişmelidir. Ortam değişkeni verilirse o geçerlidir.
+const VAPID_PUBLIC_KEY =
+  (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) || 'BAPLfssm4T-bPVXh7g9VVpUPZ7s1hv1zISxlZTgwohQ6GUD1BQtlwdGvjScUn9_01Di45kepvtWG-VFHjVfQt_s'
 
 function isIos(): boolean {
   return /iphone|ipad|ipod/i.test(navigator.userAgent)
