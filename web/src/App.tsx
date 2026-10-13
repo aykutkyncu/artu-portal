@@ -18,6 +18,7 @@ const TasksPage = lazy(() => import('./pages/TasksPage'))
 const ShiftsPage = lazy(() => import('./pages/ShiftsPage'))
 const ProductionPage = lazy(() => import('./pages/ProductionPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
+const LeavesPage = lazy(() => import('./pages/LeavesPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 
@@ -54,6 +55,7 @@ function AppRoutes() {
           <Route path="gorevler" element={<TasksPage />} />
           <Route path="vardiya" element={<ShiftsPage />} />
           <Route path="uretim" element={<ProductionPage />} />
+          <Route path="izinler" element={<LeavesPage />} />
           <Route path="rehber" element={<DirectoryPage />} />
           <Route path="profil" element={<ProfilePage />} />
           <Route

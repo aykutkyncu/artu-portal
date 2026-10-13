@@ -6,6 +6,8 @@ import { useAuth } from './AuthContext'
 interface Unread {
   conversations: Record<string, number>
   announcements: number
+  /** Sonuçlandırmamı bekleyen izin talepleri (birim sorumlusu / admin) */
+  leaves?: number
 }
 
 interface DataValue {

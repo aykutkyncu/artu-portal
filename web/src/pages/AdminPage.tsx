@@ -151,6 +151,7 @@ function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onC
     department: initial.department ?? '',
     role: (initial.role ?? 'staff') as Role,
     active: initial.active ?? true,
+    annualLeaveDays: initial.annualLeaveDays ?? 14,
   })
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -178,7 +179,7 @@ function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onC
           p_phone: form.phone,
           p_email: form.email.trim(),
         })
-        if (!form.active) await update('profiles', id, { active: false })
+        if (!form.active || form.annualLeaveDays !== 14) await update('profiles', id, { active: form.active, annualLeaveDays: form.annualLeaveDays })
       } else {
         await update('profiles', initial.id!, { ...form, name: form.name.trim(), username, email: form.email.trim() })
         if (password) await rpc('admin_reset_password', { p_user: initial.id, p_password: password })
@@ -280,6 +281,9 @@ function UserEditor({ initial, onClose, onSaved }: { initial: Partial<User>; onC
         </Field>
         <Field label="Telefon">
           <Input type="tel" value={form.phone} onChange={(e) => set('phone', e.target.value)} />
+        </Field>
+        <Field label="Yıllık izin hakkı (gün)" hint="İzinler ekranında kalan izin bu sayıdan hesaplanır.">
+          <Input type="number" min={0} max={99} step={0.5} value={form.annualLeaveDays} onChange={(e) => set('annualLeaveDays', Number(e.target.value))} />
         </Field>
         {!isSelf && (
           <div className="sm:col-span-2">

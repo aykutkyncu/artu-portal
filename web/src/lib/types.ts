@@ -22,6 +22,8 @@ export interface User extends Rec {
   title: string
   phone: string
   active: boolean
+  /** Yıllık izin hakkı (gün); admin girer */
+  annualLeaveDays: number
   lastSeen: string
   created: string
 }
@@ -141,4 +143,22 @@ export interface ProductionPlan extends Rec {
   department: string
   notes: string
   createdBy: string
+}
+
+export type LeaveType = 'annual' | 'excuse' | 'sick' | 'unpaid' | 'other'
+export type LeaveStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
+
+export interface LeaveRequest extends Rec {
+  user: string
+  type: LeaveType
+  /** YYYY-MM-DD */
+  startDate: string
+  endDate: string
+  days: number
+  note: string
+  status: LeaveStatus
+  decidedBy: string
+  decidedAt: string
+  decisionNote: string
+  created: string
 }

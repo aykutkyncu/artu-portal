@@ -12,6 +12,7 @@ import {
   Users,
   CalendarClock,
   UserCircle,
+  TreePalm,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
@@ -39,6 +40,7 @@ function useNavItems(): NavItem[] {
     { to: '/gorevler', label: 'Görevler', icon: <ClipboardList className="size-5" /> },
     { to: '/vardiya', label: 'Vardiya', icon: <CalendarClock className="size-5" /> },
     { to: '/uretim', label: 'Üretim Planı', icon: <Factory className="size-5" /> },
+    { to: '/izinler', label: 'İzinler', icon: <TreePalm className="size-5" />, badge: unread.leaves ?? 0 },
     { to: '/rehber', label: 'Rehber', icon: <Users className="size-5" /> },
   ]
   if (isAdmin(user)) items.push({ to: '/yonetim', label: 'Yönetim', icon: <Settings className="size-5" /> })

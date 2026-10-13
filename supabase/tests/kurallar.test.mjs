@@ -11,7 +11,8 @@ const sql = fs.readFileSync(MIG, 'utf8').replace(/^create extension if not exist
 const sql2 = fs.readFileSync(new URL('../migrations/002_kullanici_silme.sql', import.meta.url), 'utf8')
 const sql3 = fs.readFileSync(new URL('../migrations/003_mesaj_ozellikleri.sql', import.meta.url), 'utf8')
 const sql4 = fs.readFileSync(new URL('../migrations/004_sohbet_silme.sql', import.meta.url), 'utf8')
-for (const part of [sql, sql2, sql3, sql4, sql, sql2, sql3, sql4]) await db.exec(part) // tekrar çalıştırılabilir olmalı
+const sql5 = fs.readFileSync(new URL('../migrations/005_izin_talepleri.sql', import.meta.url), 'utf8')
+for (const part of [sql, sql2, sql3, sql4, sql5, sql, sql2, sql3, sql4, sql5]) await db.exec(part) // tekrar çalıştırılabilir olmalı
 console.log('migration x2 OK')
 
 let pass = 0
@@ -230,6 +231,56 @@ ok('sonradan atanan bildirim alır', c.user_ids.length === 1 && c.user_ids[0] ==
 ok('atanan görevi silemez', (await as(S1, (x) => x('delete from tasks where id=$1', [T]))).affectedRows === 0)
 const T2 = (await rows(S1, "insert into tasks(title,assignees,created_by) values ('Kendi işim',$1,$2) returning id", [[S1], S1]))[0].id
 ok('kendi görevini düzenler', (await as(S1, (x) => x("update tasks set title='Kendi işim 2' where id=$1", [T2]))).affectedRows === 1)
+
+console.log('izin talepleri')
+const leave = (uid, s, e, days, type = 'annual') =>
+  rows(uid, 'insert into leave_requests("user",type,start_date,end_date,days,status,decided_by) values ($1,$2,$3,$4,$5,\'approved\',$1) returning *', [uid, type, s, e, days])
+const L = (await leave(S1, '2027-03-01', '2027-03-03', 3))[0]
+c = await lastCall()
+ok('talep beklemede açılır (onaylı gönderilse bile)', L.status === 'pending' && L.decided_by === null, JSON.stringify(L))
+ok('talep bildirimi birim sorumlusuna', c.title === '🌴 İzin talebi: Ayşe K.' && c.body === 'Yıllık izin · 01.03.2027 – 03.03.2027 · 3 gün' && c.user_ids.length === 1 && c.user_ids[0] === M, JSON.stringify(c))
+await fails('başkası adına talep açamaz', S2, 'insert into leave_requests("user",start_date,end_date,days) values ($1,\'2027-04-01\',\'2027-04-01\',1)', [S1], /row-level security/)
+await fails('gün sayısı aralıktan uzun olamaz', S1, 'insert into leave_requests("user",start_date,end_date,days) values ($1,\'2027-04-01\',\'2027-04-02\',3)', [S1], /check constraint/)
+await fails('çakışan talep açılamaz', S1, 'insert into leave_requests("user",start_date,end_date,days) values ($1,\'2027-03-03\',\'2027-03-05\',3)', [S1], /başka bir izin/)
+const sees = async (uid) => (await rows(uid, 'select id from leave_requests')).length
+ok('talebi sahibi, birim sorumlusu ve admin görür', (await sees(S1)) === 1 && (await sees(M)) === 1 && (await sees(A)) === 1 && (await sees(S2)) === 0 && (await sees(S3)) === 0)
+ok('bekleyen talep sayacı', (await rows(M, 'select unread_counts() u'))[0].u.leaves === 1 && (await rows(A, 'select unread_counts() u'))[0].u.leaves === 1 && (await rows(S1, 'select unread_counts() u'))[0].u.leaves === 0)
+await fails('kendi talebini onaylayamaz', S1, "update leave_requests set status='approved' where id=$1", [L.id], /yetkiniz yok/)
+ok('başka birimin personeli dokunamaz', (await as(S2, (x) => x("update leave_requests set status='approved' where id=$1", [L.id]))).affectedRows === 0)
+await as(S1, (x) => x("update leave_requests set end_date='2027-03-04', days=4 where id=$1", [L.id]))
+ok('sahibi bekleyen talebi düzeltir', Number((await one('select days from leave_requests where id=$1', [L.id])).days) === 4)
+await fails('birim sorumlusu talebin içeriğini değiştiremez', M, "update leave_requests set days=1 where id=$1", [L.id], /değiştirilemez/)
+await db.query('insert into shifts("user",date,kind) values ($1,\'2027-03-02\',\'morning\'),($1,\'2027-03-03\',\'off\')', [S1])
+await as(M, (x) => x("update leave_requests set status='approved', days=1, decision_note=' İyi tatiller ' where id=$1", [L.id]))
+const la = await one('select * from leave_requests where id=$1', [L.id])
+c = await lastCall()
+ok('onay: karar bilgisi yazılır, içerik değişmez', la.status === 'approved' && la.decided_by === M && la.decided_at !== null && Number(la.days) === 4 && la.decision_note === 'İyi tatiller', JSON.stringify(la))
+ok('onay bildirimi talep sahibine', c.title === '✅ İzin talebiniz onaylandı' && c.user_ids[0] === S1 && c.body.endsWith('4 gün'), JSON.stringify(c))
+const sh = (await db.query('select to_char(date,\'MM-DD\') d, kind, note from shifts where "user"=$1 and date between \'2027-03-01\' and \'2027-03-04\' order by date', [S1])).rows
+ok('onaylanan izin vardiyaya işlenir; hafta tatiline dokunulmaz', sh.map((r) => r.kind).join() === 'leave,leave,off,leave' && sh[0].note === 'Yıllık izin', JSON.stringify(sh))
+await fails('sonuçlanan talep yeniden sonuçlandırılamaz', A, "update leave_requests set status='rejected' where id=$1", [L.id], /zaten sonuçlanmış/)
+await fails('sonuçlanan talep düzeltilemez', S1, "update leave_requests set days=2 where id=$1", [L.id], /değiştirilemez/)
+ok('talep silinemez', await as(A, (x) => x('delete from leave_requests where id=$1', [L.id])).then(() => false, (e) => /permission denied/.test(e.message)))
+await as(S1, (x) => x("update leave_requests set status='cancelled' where id=$1", [L.id]))
+c = await lastCall()
+ok('sahibi başlamamış onaylı izni iptal eder; vardiyadan kalkar', (await db.query('select kind from shifts where "user"=$1 and date between \'2027-03-01\' and \'2027-03-04\'', [S1])).rows.map((r) => r.kind).join() === 'off', JSON.stringify(c))
+ok('iptal bildirimi onaylayana', c.title === '↩️ İzin iptal edildi: Ayşe K.' && c.user_ids[0] === M, JSON.stringify(c))
+await fails('iptal edilen talep yeniden açılamaz', S1, "update leave_requests set status='pending' where id=$1", [L.id], /yeniden açılamaz/)
+const L2 = (await leave(S1, '2027-03-01', '2027-03-01', 0.5, 'sick'))[0]
+await as(M, (x) => x("update leave_requests set status='rejected', decision_note='Rapor aslı gerekli' where id=$1", [L2.id]))
+c = await lastCall()
+ok('ret bildirimi gerekçeyle', c.title === '❌ İzin talebiniz reddedildi' && c.body === 'Rapor · 01.03.2027 · 0,5 gün · Rapor aslı gerekli' && c.user_ids[0] === S1, JSON.stringify(c))
+const L3 = (await leave(M, '2027-05-10', '2027-05-11', 2))[0]
+c = await lastCall()
+ok('birim sorumlusunun talebi admine gider', c.user_ids.length === 1 && c.user_ids[0] === A, JSON.stringify(c))
+await fails('birim sorumlusu kendi talebini onaylayamaz', M, "update leave_requests set status='approved' where id=$1", [L3.id], /yetkiniz yok/)
+await db.query("insert into leave_requests(\"user\",start_date,end_date,days,status,decided_by,decided_at) values ($1,'2020-01-06','2020-01-07',2,'approved',$2,now())", [S1, M])
+await fails('başlamış izni sahibi iptal edemez', S1, "update leave_requests set status='cancelled' where start_date='2020-01-06'", [], /Başlamış izni/)
+ok('başlamış izni birim sorumlusu iptal eder', (await as(M, (x) => x("update leave_requests set status='cancelled' where start_date='2020-01-06'"))).affectedRows === 1)
+await fails('yıllık izin hakkını kişi kendisi değiştiremez', S1, 'update profiles set annual_leave_days=30 where id=$1', [S1], /sadece admin/)
+ok('yıllık izin hakkını admin değiştirir', (await as(A, (x) => x('update profiles set annual_leave_days=20 where id=$1', [S1]))).affectedRows === 1)
+await db.query('delete from leave_requests')
+await db.query('delete from shifts')
 
 console.log('takvim, vardiya, üretim')
 const E = (await rows(S1, "insert into events(title,start,location,participants,created_by) values ('Eğitim','2026-10-21T06:30:00Z','Salon',$1,$2) returning id", [[S1, S2], S1]))[0].id
