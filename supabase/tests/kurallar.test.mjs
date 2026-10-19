@@ -12,7 +12,8 @@ const sql2 = fs.readFileSync(new URL('../migrations/002_kullanici_silme.sql', im
 const sql3 = fs.readFileSync(new URL('../migrations/003_mesaj_ozellikleri.sql', import.meta.url), 'utf8')
 const sql4 = fs.readFileSync(new URL('../migrations/004_sohbet_silme.sql', import.meta.url), 'utf8')
 const sql5 = fs.readFileSync(new URL('../migrations/005_izin_talepleri.sql', import.meta.url), 'utf8')
-for (const part of [sql, sql2, sql3, sql4, sql5, sql, sql2, sql3, sql4, sql5]) await db.exec(part) // tekrar çalıştırılabilir olmalı
+const sql6 = fs.readFileSync(new URL('../migrations/006_ariza_bildirimi.sql', import.meta.url), 'utf8')
+for (const part of [sql, sql2, sql3, sql4, sql5, sql6, sql, sql2, sql3, sql4, sql5, sql6]) await db.exec(part) // tekrar çalıştırılabilir olmalı
 console.log('migration x2 OK')
 
 let pass = 0
@@ -281,6 +282,65 @@ await fails('yıllık izin hakkını kişi kendisi değiştiremez', S1, 'update 
 ok('yıllık izin hakkını admin değiştirir', (await as(A, (x) => x('update profiles set annual_leave_days=20 where id=$1', [S1]))).affectedRows === 1)
 await db.query('delete from leave_requests')
 await db.query('delete from shifts')
+
+console.log('arıza bildirimi')
+await as(M, (x) => x('update departments set maintenance=true where id=$1', [D2]))
+ok('birim sorumlusu bakım birimi işaretleyemez', !(await one('select maintenance from departments where id=$1', [D2])).maintenance)
+await as(A, (x) => x('update departments set maintenance=true where id=$1', [D2])) // S2 (Satış) bakım ekibi oldu
+const FID = '11111111-2222-4333-8444-555555555555'
+const F = (await rows(S1, "insert into faults(id,location,description,machine_stopped,photos,status,assignee) values ($1,' Dolum hattı 2 ','Motor ses yapıyor',true,$2,'resolved',$3) returning *", [FID, [`faults/${FID}/a.jpg`], S2]))[0]
+c = await lastCall()
+ok('arıza açık başlar, atanan yok, birimi bildirenin birimi', F.status === 'open' && F.assignee === null && F.department === D1 && F.location === 'Dolum hattı 2' && F.reported_by === S1, JSON.stringify(F))
+ok('bildirim bakım ekibine', c.title === '🚨 Arıza: Dolum hattı 2' && c.body === 'Makine durdu · Motor ses yapıyor · Ayşe K.' && sorted(c.user_ids) === sorted([S2]), JSON.stringify(c))
+await fails('fotoğraf başka kaydın klasöründe olamaz', S1, "insert into faults(location,description,photos) values ('x','y',$1)", [['tasks/abc/a.jpg']], /fotoğraf yolu/)
+ok('başkası adına bildirim açılamaz', (await rows(S1, "insert into faults(reported_by,location,description) values ($1,'x','y') returning reported_by", [S3]))[0].reported_by === S1)
+ok('herkes arızaları görür', (await rows(S3, 'select id from faults')).length === 2 && (await rows(M, 'select id from faults')).length === 2)
+ok('bakım ekibine bekleyen arıza sayacı', (await rows(S2, 'select unread_counts() u'))[0].u.faults === 2 && (await rows(A, 'select unread_counts() u'))[0].u.faults === 2 && (await rows(S1, 'select unread_counts() u'))[0].u.faults === 0)
+await fails('bildiren arızayı üstlenemez', S1, "update faults set status='in_progress' where id=$1", [FID], /bakım ekibi/)
+ok('başkası bildirime dokunamaz', (await as(S3, (x) => x("update faults set description='z' where id=$1", [FID]))).affectedRows === 0)
+ok('bildiren açık arızayı düzeltir', (await as(S1, (x) => x("update faults set description='Motor çok ses yapıyor', urgent=true where id=$1", [FID]))).affectedRows === 1)
+await fails('bakım birine atamadan önce üstlenmeli', S2, 'update faults set assignee=$2 where id=$1', [FID, S2], /üstlenin/)
+await fails('bakım dışından birine atanamaz', A, "update faults set status='in_progress', assignee=$2 where id=$1", [FID, M], /bakım ekibinden/)
+await as(A, (x) => x("update faults set status='in_progress', assignee=$2 where id=$1", [FID, S2]))
+c = await calls()
+const fp = await one('select * from faults where id=$1', [FID])
+ok('admin bakımcıya atar', fp.status === 'in_progress' && fp.assignee === S2 && fp.taken_at !== null, JSON.stringify(fp))
+ok('bildirene "üstlenildi", atanana "atandı" gider', c.at(-2).title === '🛠️ Arıza üstlenildi: Dolum hattı 2' && c.at(-2).body === 'Ali Can ilgileniyor.' && c.at(-2).user_ids[0] === S1 && c.at(-1).title === '🛠️ Size arıza atandı: Dolum hattı 2' && c.at(-1).user_ids[0] === S2, JSON.stringify(c.slice(-2)))
+await fails('bildiren üstlenilmiş arızayı değiştiremez', S1, "update faults set description='a' where id=$1", [FID], /değiştiremezsiniz/)
+await fails('bildiren üstlenilmiş arızayı iptal edemez', S1, "update faults set status='cancelled' where id=$1", [FID], /iptal edemezsiniz/)
+await fails('çözüm yazmadan kapatılamaz', S2, "update faults set status='resolved' where id=$1", [FID], /çözümü/)
+await db.exec('alter table faults disable trigger a_stamp; alter table faults disable trigger c_check')
+await db.query("update faults set created = now() - interval '95 minutes' where id=$1", [FID])
+await db.exec('alter table faults enable trigger a_stamp; alter table faults enable trigger c_check')
+await as(S2, (x) => x("update faults set status='resolved', resolution=' Rulman değişti ' where id=$1", [FID]))
+const fr = await one('select * from faults where id=$1', [FID])
+c = await lastCall()
+ok('kapatınca duruş süresi bildirimden kapanışa hesaplanır', fr.status === 'resolved' && fr.resolved_by === S2 && fr.downtime_minutes === 95 && fr.resolution === 'Rulman değişti', JSON.stringify(fr))
+ok('bildirene "giderildi" gider', c.title === '✅ Arıza giderildi: Dolum hattı 2' && c.body === 'Rulman değişti · Duruş 1 sa 35 dk' && c.user_ids[0] === S1, JSON.stringify(c))
+ok('bakım duruş süresini düzeltir', (await as(S2, (x) => x('update faults set downtime_minutes=80 where id=$1', [FID]))).affectedRows === 1)
+await fails('bildiren duruş süresini değiştiremez', S1, 'update faults set downtime_minutes=1 where id=$1', [FID], /bakım ekibi/)
+await fails('kapanan arıza iptal edilemez', S2, "update faults set status='cancelled' where id=$1", [FID], /Kapanmış/)
+await as(S1, (x) => x("update faults set status='open' where id=$1", [FID]))
+const fo = await one('select * from faults where id=$1', [FID])
+c = await lastCall()
+ok('bildiren yeniden açar; çözüm bilgisi silinir', fo.status === 'open' && fo.assignee === null && fo.resolution === '' && fo.downtime_minutes === null && fo.resolved_by === null, JSON.stringify(fo))
+ok('yeniden açılınca bakım ekibine gider', c.title === '↩️ Arıza yeniden açıldı: Dolum hattı 2' && sorted(c.user_ids) === sorted([S2]), JSON.stringify(c))
+const F2 = (await rows(S3, "insert into faults(location,description) values ('Kompresör','Hava kaçağı') returning *"))[0]
+c = await lastCall()
+ok('normal arıza simgesi', c.title === '🔧 Arıza: Kompresör', JSON.stringify(c))
+await as(S2, (x) => x("update faults set status='resolved', resolution='Conta değişti', downtime_minutes=30 where id=$1", [F2.id]))
+ok('makine durmadıysa duruş süresi tutulmaz', (await one('select downtime_minutes from faults where id=$1', [F2.id])).downtime_minutes === null)
+const F3 = (await rows(S3, "insert into faults(location,description) values ('Kapı','Kilit') returning id"))[0].id
+ok('bildiren açık arızasını iptal eder', (await as(S3, (x) => x("update faults set status='cancelled' where id=$1", [F3]))).affectedRows === 1)
+await fails('iptal edilen arıza değiştirilemez', S2, "update faults set status='open' where id=$1", [F3], /İptal edilen/)
+ok('arıza silinemez', await as(A, (x) => x('delete from faults where id=$1', [FID])).then(() => false, (e) => /permission denied/.test(e.message)))
+ok('arıza fotoğrafı, arızayı görebilene açık', (await rows(S3, 'select can_read_attachment($1) ok', [`faults/${FID}/a.jpg`]))[0].ok === true)
+await as(A, (x) => x('update departments set maintenance=false where id=$1', [D2]))
+const F4 = (await rows(S1, "insert into faults(location,description) values ('Fırın','Isınmıyor') returning id"))[0].id
+c = await lastCall()
+ok('bakım birimi yoksa bildirim adminlere', sorted(c.user_ids) === sorted([A]), JSON.stringify(c))
+ok('bakım birimi kalmayınca personel üstlenemez', (await as(S2, (x) => x("update faults set status='in_progress' where id=$1", [F4]))).affectedRows === 0)
+await db.query('delete from faults')
 
 console.log('takvim, vardiya, üretim')
 const E = (await rows(S1, "insert into events(title,start,location,participants,created_by) values ('Eğitim','2026-10-21T06:30:00Z','Salon',$1,$2) returning id", [[S1, S2], S1]))[0].id

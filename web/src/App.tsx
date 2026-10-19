@@ -19,6 +19,7 @@ const ShiftsPage = lazy(() => import('./pages/ShiftsPage'))
 const ProductionPage = lazy(() => import('./pages/ProductionPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
 const LeavesPage = lazy(() => import('./pages/LeavesPage'))
+const FaultsPage = lazy(() => import('./pages/FaultsPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 
@@ -56,6 +57,7 @@ function AppRoutes() {
           <Route path="vardiya" element={<ShiftsPage />} />
           <Route path="uretim" element={<ProductionPage />} />
           <Route path="izinler" element={<LeavesPage />} />
+          <Route path="arizalar" element={<FaultsPage />} />
           <Route path="rehber" element={<DirectoryPage />} />
           <Route path="profil" element={<ProfilePage />} />
           <Route

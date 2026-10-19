@@ -7,7 +7,7 @@ import { compressImage, resizeImage } from './upload'
 const ATTACHMENTS = 'ekler' // gizli; kaydı görebilen eki de görür
 const AVATARS = 'avatars' // herkese açık adres
 
-export type AttachmentFolder = 'messages' | 'announcements' | 'tasks'
+export type AttachmentFolder = 'messages' | 'announcements' | 'tasks' | 'faults'
 export const MAX_ATTACHMENTS = 5
 
 const THUMB_SUFFIX = '.t.jpg'

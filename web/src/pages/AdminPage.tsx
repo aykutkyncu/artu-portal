@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
-import { Building2, Pencil, Plus, Search, Trash2, UserPlus } from 'lucide-react'
+import { Building2, Pencil, Plus, Search, Trash2, UserPlus, Wrench } from 'lucide-react'
 import { useAuth, useMe } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { errorMessage, insert, remove as removeRecord, rows, rpc, supabase, update } from '../lib/db'
@@ -327,6 +327,16 @@ function DepartmentsAdmin() {
     }
   }
 
+  const toggleMaintenance = async (d: Department) => {
+    setError(null)
+    try {
+      await update('departments', d.id, { maintenance: !d.maintenance })
+      await reloadDirectory()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
   const remove = async (d: Department) => {
     const count = users.filter((u) => u.department === d.id).length
     if (count > 0) return setError(`"${d.name}" biriminde ${count} kişi var. Önce kişileri başka birime taşıyın.`)
@@ -347,6 +357,7 @@ function DepartmentsAdmin() {
           <Plus className="size-4" /> Ekle
         </Button>
       </div>
+      <p className="text-xs text-stone-500">Arıza bildirimleri <b>bakım birimi</b> işaretli birimin üyelerine gider; onlar ve admin arızayı üstlenip kapatır. Bakım birimi yoksa bildirimler adminlere gider.</p>
       <ErrorNote message={error} />
       <ul className="divide-y divide-stone-100 overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-sm">
         {departments.map((d) => (
@@ -359,6 +370,14 @@ function DepartmentsAdmin() {
                 {d.name} <span className="text-xs text-stone-400">({users.filter((u) => u.department === d.id).length} kişi)</span>
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => void toggleMaintenance(d)}
+              title={d.maintenance ? 'Bakım birimi (arızaları bu birim üstlenir). Kaldırmak için tıklayın.' : 'Bakım birimi yap: arıza bildirimleri bu birime gider'}
+              className={clsx('flex items-center gap-1 rounded-lg px-2 py-1 text-xs', d.maintenance ? 'bg-sky-100 text-sky-800' : 'text-stone-400 hover:bg-stone-100')}
+            >
+              <Wrench className="size-3.5" /> {d.maintenance ? 'Bakım birimi' : 'Bakım?'}
+            </button>
             <button type="button" onClick={() => setEditing(d)} className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100" aria-label="Yeniden adlandır">
               <Pencil className="size-4" />
             </button>

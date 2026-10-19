@@ -1,4 +1,4 @@
-import type { EventCategory, LeaveStatus, LeaveType, PlanStatus, Priority, Role, ShiftKind, TaskPriority, TaskStatus } from './types'
+import type { EventCategory, FaultStatus, LeaveStatus, LeaveType, PlanStatus, Priority, Role, ShiftKind, TaskPriority, TaskStatus } from './types'
 
 export const ROLE_LABEL: Record<Role, string> = {
   admin: 'Yönetici (Admin)',
@@ -68,5 +68,12 @@ export const LEAVE_STATUS: Record<LeaveStatus, { label: string; cls: string }> =
   pending: { label: 'Onay bekliyor', cls: 'bg-amber-100 text-amber-800' },
   approved: { label: 'Onaylandı', cls: 'bg-green-100 text-green-700' },
   rejected: { label: 'Reddedildi', cls: 'bg-red-100 text-red-700' },
+  cancelled: { label: 'İptal edildi', cls: 'bg-stone-100 text-stone-500' },
+}
+
+export const FAULT_STATUS: Record<FaultStatus, { label: string; cls: string }> = {
+  open: { label: 'Bekliyor', cls: 'bg-amber-100 text-amber-800' },
+  in_progress: { label: 'Bakımda', cls: 'bg-sky-100 text-sky-800' },
+  resolved: { label: 'Giderildi', cls: 'bg-green-100 text-green-700' },
   cancelled: { label: 'İptal edildi', cls: 'bg-stone-100 text-stone-500' },
 }

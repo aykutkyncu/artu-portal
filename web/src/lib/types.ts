@@ -9,6 +9,8 @@ export interface Department extends Rec {
   name: string
   color: string
   description: string
+  /** Bakım birimi: üyeleri arızaları üstlenip kapatır */
+  maintenance: boolean
 }
 
 export interface User extends Rec {
@@ -160,5 +162,26 @@ export interface LeaveRequest extends Rec {
   decidedBy: string
   decidedAt: string
   decisionNote: string
+  created: string
+}
+
+export type FaultStatus = 'open' | 'in_progress' | 'resolved' | 'cancelled'
+
+export interface Fault extends Rec {
+  reportedBy: string
+  department: string
+  location: string
+  description: string
+  urgent: boolean
+  machineStopped: boolean
+  photos: string[]
+  status: FaultStatus
+  assignee: string
+  takenAt: string
+  resolvedBy: string
+  resolvedAt: string
+  resolution: string
+  /** Makine durduysa dakika; yoksa boş */
+  downtimeMinutes: number | ''
   created: string
 }

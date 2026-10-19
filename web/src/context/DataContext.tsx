@@ -8,6 +8,8 @@ interface Unread {
   announcements: number
   /** Sonuçlandırmamı bekleyen izin talepleri (birim sorumlusu / admin) */
   leaves?: number
+  /** Bakım ekibini bekleyen (üstlenilmemiş) arızalar */
+  faults?: number
 }
 
 interface DataValue {
