@@ -32,7 +32,7 @@ const camel = (key: string) => key.replace(/_([a-z])/g, (_, ch: string) => ch.to
 const snake = (key: string) => key.replace(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`)
 
 /** Boş bırakılınca veritabanına NULL yazılan sütunlar (ilişkiler ve tarihler). */
-const NULLABLE = new Set(['department', 'responsible', 'due_date', 'end', 'completed_at', 'assignee', 'downtime_minutes'])
+const NULLABLE = new Set(['department', 'responsible', 'due_date', 'end', 'completed_at', 'assignee', 'downtime_minutes', 'verified_by'])
 
 export function fromRow<T>(row: Record<string, unknown>): T {
   const out: Record<string, unknown> = {}

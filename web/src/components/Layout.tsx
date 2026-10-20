@@ -1,6 +1,7 @@
 import clsx from 'clsx'
 import {
   CalendarDays,
+  ClipboardCheck,
   ClipboardList,
   Factory,
   Home,
@@ -43,6 +44,7 @@ function useNavItems(): NavItem[] {
     { to: '/uretim', label: 'Üretim Planı', icon: <Factory className="size-5" /> },
     { to: '/izinler', label: 'İzinler', icon: <TreePalm className="size-5" />, badge: unread.leaves ?? 0 },
     { to: '/arizalar', label: 'Arızalar', icon: <Wrench className="size-5" />, badge: unread.faults ?? 0 },
+    { to: '/kontroller', label: 'Kontroller', icon: <ClipboardCheck className="size-5" />, badge: unread.checks ?? 0 },
     { to: '/rehber', label: 'Rehber', icon: <Users className="size-5" /> },
   ]
   if (isAdmin(user)) items.push({ to: '/yonetim', label: 'Yönetim', icon: <Settings className="size-5" /> })

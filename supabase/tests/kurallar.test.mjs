@@ -13,7 +13,8 @@ const sql3 = fs.readFileSync(new URL('../migrations/003_mesaj_ozellikleri.sql', 
 const sql4 = fs.readFileSync(new URL('../migrations/004_sohbet_silme.sql', import.meta.url), 'utf8')
 const sql5 = fs.readFileSync(new URL('../migrations/005_izin_talepleri.sql', import.meta.url), 'utf8')
 const sql6 = fs.readFileSync(new URL('../migrations/006_ariza_bildirimi.sql', import.meta.url), 'utf8')
-for (const part of [sql, sql2, sql3, sql4, sql5, sql6, sql, sql2, sql3, sql4, sql5, sql6]) await db.exec(part) // tekrar çalıştırılabilir olmalı
+const sql7 = fs.readFileSync(new URL('../migrations/007_kontrol_formlari.sql', import.meta.url), 'utf8')
+for (const part of [sql, sql2, sql3, sql4, sql5, sql6, sql7, sql, sql2, sql3, sql4, sql5, sql6, sql7]) await db.exec(part) // tekrar çalıştırılabilir olmalı
 console.log('migration x2 OK')
 
 let pass = 0
@@ -341,6 +342,66 @@ c = await lastCall()
 ok('bakım birimi yoksa bildirim adminlere', sorted(c.user_ids) === sorted([A]), JSON.stringify(c))
 ok('bakım birimi kalmayınca personel üstlenemez', (await as(S2, (x) => x("update faults set status='in_progress' where id=$1", [F4]))).affectedRows === 0)
 await db.query('delete from faults')
+
+console.log('kontrol formları')
+ok('hazır üç form bir kez gelir', (await one('select count(*)::int n from check_forms')).n === 3)
+const TEMP = (await one("select id from check_forms where name like 'Sıcaklık%'")).id
+const TEMIZ = (await one("select id from check_forms where name like 'Günlük temizlik%'")).id
+ok('günlük formlar sayaçta', (await rows(S1, 'select unread_counts() u'))[0].u.checks === 3)
+const item = (o) => JSON.stringify(o)
+await fails('personel form açamaz', S1, 'insert into check_forms(name,items) values ($1,$2)', ['x', item([{ id: 'a', label: 'A', kind: 'check' }])], /row-level security|sadece admin/)
+await fails('maddesiz form olmaz', A, "insert into check_forms(name,items) values ('x','[]')", [], /en az bir madde/)
+await fails('aynı madde kimliği iki kez', A, 'insert into check_forms(name,items) values ($1,$2)', ['x', item([{ id: 'a', label: 'A', kind: 'check' }, { id: 'a', label: 'B', kind: 'check' }])], /benzersiz/)
+await fails('geçersiz madde türü', A, 'insert into check_forms(name,items) values ($1,$2)', ['x', item([{ id: 'a', label: 'A', kind: 'foto' }])], /türü/)
+await fails('alt sınır üstten büyük', A, 'insert into check_forms(name,items) values ($1,$2)', ['x', item([{ id: 'a', label: 'Isı', kind: 'number', min: 10, max: 5 }])], /alt sınır/)
+const UFI = item([{ id: 'el', label: 'Eller yıkandı', kind: 'check' }, { id: 'isi', label: 'Isı', kind: 'number', min: 28, max: 32, unit: '°C' }])
+const UF = (await rows(M, "insert into check_forms(name,department,items) values (' Dolum hijyeni ',$1,$2) returning *", [D1, UFI]))[0]
+ok('birim sorumlusu kendi birimine form açar', UF.name === 'Dolum hijyeni' && UF.created_by === M, JSON.stringify(UF))
+await fails('birim sorumlusu başka birime form açamaz', M, "insert into check_forms(name,department,items) values ('x',$1,$2)", [D2, UFI], /row-level security|sadece admin/)
+ok('başka birimin sorumlusu formu değiştiremez', (await as(N, (x) => x("update check_forms set name='h' where id=$1", [UF.id]))).affectedRows === 0)
+const entry = (uid, form, values, note = '') => rows(uid, 'insert into check_entries(form,"values",note) values ($1,$2,$3) returning *', [form, item(values), note])
+const entryFails = (name, uid, form, values, re, note = '') => fails(name, uid, 'insert into check_entries(form,"values",note) values ($1,$2,$3)', [form, item(values), note], re)
+await entryFails('başka birim dolduramaz', S2, UF.id, { el: true, isi: 30 }, /yetkiniz yok/)
+await entryFails('zorunlu madde boş', S1, UF.id, { el: true }, /doldurulmadı/)
+await entryFails('formda olmayan madde', S1, UF.id, { el: true, isi: 30, x: 1 }, /olmayan madde/)
+await entryFails('ölçüme metin yazılamaz', S1, UF.id, { el: true, isi: 'otuz' }, /sayı yazın/)
+await entryFails('sınır dışı ölçümde açıklama zorunlu', S1, UF.id, { el: true, isi: 35 }, /düzeltici/)
+const before7 = (await calls()).length
+const E1 = (await rows(S1, "insert into check_entries(form,\"values\",filled_by,day,verified_by) values ($1,$2,$3,'2020-01-01',$3) returning *", [UF.id, item({ el: true, isi: 30 }), S2]))[0]
+ok('uygun kayıt: dolduran ve gün sunucuda, bildirim yok', E1.filled_by === S1 && !E1.has_issue && E1.verified_by === null && (await calls()).length === before7 && E1.items.length === 2 && String(E1.day) !== String(new Date('2020-01-01')), JSON.stringify(E1))
+const E2 = (await entry(S1, UF.id, { el: false, isi: 30 }, ' Eldiven değiştirildi '))[0]
+c = await lastCall()
+ok('uygunsuz kayıt işaretlenir', E2.has_issue && E2.note === 'Eldiven değiştirildi', JSON.stringify(E2))
+ok('uygunsuzluk birim sorumlusuna ve admine', c.title === '⚠️ Uygunsuzluk: Dolum hijyeni' && c.body === 'Eldiven değiştirildi · Ayşe K.' && sorted(c.user_ids) === sorted([M, A]), JSON.stringify(c))
+await as(A, (x) => x('update check_forms set items=$2 where id=$1', [UF.id, item([{ id: 'el', label: 'Eller yıkandı', kind: 'check' }])]))
+ok('şablon değişse de eski kayıt maddeleri korunur', (await one('select items from check_entries where id=$1', [E1.id])).items.length === 2)
+ok('dolduran aynı gün düzeltir', (await as(S1, (x) => x('update check_entries set "values"=$2 where id=$1', [E1.id, item({ el: true, isi: 31 })]))).affectedRows === 1)
+await fails('düzeltmede sınır dışı → açıklama ister', S1, 'update check_entries set "values"=$2 where id=$1', [E1.id, item({ el: true, isi: 40 })], /düzeltici/)
+ok('başkası kaydı düzeltemez', (await as(S3, (x) => x("update check_entries set note='x' where id=$1", [E1.id]))).affectedRows === 0)
+ok('personel onaylayamaz', (await as(S2, (x) => x('update check_entries set verified_by=$2 where id=$1', [E1.id, S2]))).affectedRows === 0)
+await fails('dolduran personel onaylayamaz', S1, 'update check_entries set verified_by=$2 where id=$1', [E1.id, S1], /onaylayabilir/)
+await fails('başka birimin sorumlusu onaylayamaz', N, 'update check_entries set verified_by=$2 where id=$1', [E1.id, N], /onaylayabilir/)
+await as(M, (x) => x('update check_entries set verified_by=$2 where id=$1', [E1.id, A]))
+const ev = await one('select * from check_entries where id=$1', [E1.id])
+ok('birim sorumlusu onaylar (onaylayan kendisi yazılır)', ev.verified_by === M && ev.verified_at !== null, JSON.stringify(ev))
+await fails('onaylanan kayıt düzeltilemez', S1, "update check_entries set note='x' where id=$1", [E1.id], /Onaylanmış/)
+await db.exec('alter table check_entries disable trigger c_check')
+await db.query("update check_entries set day='2020-01-01' where id=$1", [E2.id])
+await db.exec('alter table check_entries enable trigger c_check')
+await fails('eski günün kaydı düzeltilemez', S1, "update check_entries set note='y' where id=$1", [E2.id], /doldurulduğu gün/)
+const ME = (await entry(M, UF.id, { el: true }))[0].id
+await fails('kendi kaydını onaylayamaz', M, 'update check_entries set verified_by=$2 where id=$1', [ME, M], /Kendi/)
+ok('kayıt silinemez', await as(A, (x) => x('delete from check_entries where id=$1', [E1.id])).then(() => false, (e) => /permission denied/.test(e.message)))
+await entry(S3, TEMIZ, { zemin: true, tezgah: true, makine: true, kalip: true, lavabo: true, cop: true, hasere: true, cam: true })
+let u7 = (await rows(S1, 'select unread_counts() u'))[0].u
+ok('doldurulan günlük formlar sayaçtan düşer', u7.checks === 2, JSON.stringify(u7)) // sıcaklık, metal (temizlik ve dolum hijyeni bugün dolduruldu)
+u7 = (await rows(S2, 'select unread_counts() u'))[0].u
+ok('başka birimin formu sayılmaz', u7.checks === 2, JSON.stringify(u7))
+await as(A, (x) => x('update check_forms set active=false where id=$1', [TEMP]))
+await entryFails('pasif form doldurulamaz', S1, TEMP, {}, /yetkiniz yok/)
+ok('herkes kayıtları görür', (await rows(S2, 'select id from check_entries')).length === 4)
+await as(A, (x) => x('update check_forms set active=true where id=$1', [TEMP]))
+await db.query('delete from check_entries')
 
 console.log('takvim, vardiya, üretim')
 const E = (await rows(S1, "insert into events(title,start,location,participants,created_by) values ('Eğitim','2026-10-21T06:30:00Z','Salon',$1,$2) returning id", [[S1, S2], S1]))[0].id

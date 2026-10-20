@@ -185,3 +185,44 @@ export interface Fault extends Rec {
   downtimeMinutes: number | ''
   created: string
 }
+
+export type CheckItemKind = 'check' | 'number' | 'text'
+
+/** Kontrol formu maddesi. "number" için sınır dışı değer uygunsuzluktur. */
+export interface CheckItem {
+  id: string
+  label: string
+  kind: CheckItemKind
+  unit?: string
+  min?: number | null
+  max?: number | null
+}
+
+export interface CheckForm extends Rec {
+  name: string
+  description: string
+  /** Doldurması gereken birim; boşsa herkes */
+  department: string
+  frequency: 'daily' | 'free'
+  items: CheckItem[]
+  active: boolean
+  sort: number
+  createdBy: string
+}
+
+export type CheckValue = boolean | number | string
+
+export interface CheckEntry extends Rec {
+  form: string
+  filledBy: string
+  /** YYYY-MM-DD (İstanbul) */
+  day: string
+  /** Doldurulduğu andaki maddeler */
+  items: CheckItem[]
+  values: Record<string, CheckValue>
+  hasIssue: boolean
+  note: string
+  verifiedBy: string
+  verifiedAt: string
+  created: string
+}

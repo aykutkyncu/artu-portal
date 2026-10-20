@@ -25,7 +25,7 @@ render.yaml                       Render yayın ayarı
 1. https://supabase.com → **New project**. Bölge: **Frankfurt**. Veritabanı şifresini saklayın.
    - Portal için **ayrı bir proje** açın (depo sevk projesinin içine kurmayın). Ücretsiz hesapta proje sayısı sınırlıdır; yer yoksa panel uyarır.
 2. **Authentication → Sign In / Providers → Email**: **Allow new users to sign up** seçeneğini **kapatın**. Kullanıcıları sadece admin açar.
-3. **SQL Editor → New query**: `supabase/migrations/` klasöründeki dosyaları **numara sırasıyla**, her birinin tamamını yapıştırıp **Run** diyerek çalıştırın. `001_baslangic.sql` sonunda iki satır çıkmalı: tablo sayısı **13**, dosya alanı sayısı **2**. `002_kullanici_silme.sql` sonunda tek satır: **1**. `003_mesaj_ozellikleri.sql` sonunda üç satır, `004_sohbet_silme.sql`, `005_izin_talepleri.sql` ve `006_ariza_bildirimi.sql` sonunda ikişer satır: hepsi **evet**.
+3. **SQL Editor → New query**: `supabase/migrations/` klasöründeki dosyaları **numara sırasıyla**, her birinin tamamını yapıştırıp **Run** diyerek çalıştırın. `001_baslangic.sql` sonunda iki satır çıkmalı: tablo sayısı **13**, dosya alanı sayısı **2**. `002_kullanici_silme.sql` sonunda tek satır: **1**. `003_mesaj_ozellikleri.sql` sonunda üç satır, `004_sohbet_silme.sql`, `005_izin_talepleri.sql` ve `006_ariza_bildirimi.sql` sonunda ikişer, `007_kontrol_formlari.sql` sonunda üç satır: hepsi **evet**.
 4. İlk admin hesabını açın (şifre en az 10 karakter). Aynı ekranda:
    ```sql
    select private.create_user('aykut', 'GucluBirSifre!2026', 'Aykut Koyuncu', 'admin');

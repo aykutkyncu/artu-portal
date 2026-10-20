@@ -20,6 +20,7 @@ const ProductionPage = lazy(() => import('./pages/ProductionPage'))
 const DirectoryPage = lazy(() => import('./pages/DirectoryPage'))
 const LeavesPage = lazy(() => import('./pages/LeavesPage'))
 const FaultsPage = lazy(() => import('./pages/FaultsPage'))
+const ChecksPage = lazy(() => import('./pages/ChecksPage'))
 const AdminPage = lazy(() => import('./pages/AdminPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 
@@ -58,6 +59,7 @@ function AppRoutes() {
           <Route path="uretim" element={<ProductionPage />} />
           <Route path="izinler" element={<LeavesPage />} />
           <Route path="arizalar" element={<FaultsPage />} />
+          <Route path="kontroller" element={<ChecksPage />} />
           <Route path="rehber" element={<DirectoryPage />} />
           <Route path="profil" element={<ProfilePage />} />
           <Route

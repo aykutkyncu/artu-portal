@@ -10,6 +10,8 @@ interface Unread {
   leaves?: number
   /** Bakım ekibini bekleyen (üstlenilmemiş) arızalar */
   faults?: number
+  /** Bugün henüz kimsenin doldurmadığı, birimime düşen günlük kontrol formları */
+  checks?: number
 }
 
 interface DataValue {
